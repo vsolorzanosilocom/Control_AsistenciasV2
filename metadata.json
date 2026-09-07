@@ -1,0 +1,6 @@
+{
+  "name": "Silocom - Control de Asistencia",
+  "description": "Sistema corporativo de registro de asistencias y jornadas con geofencing para Silocom.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

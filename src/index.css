@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Space Grotesk', -apple-system, sans-serif;
+    --font-body: 'Manrope', -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background-color: #090d16;
+    color: #f8fafc;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+.glow-emerald {
+  box-shadow: 0 0 24px -2px rgba(16, 185, 129, 0.35);
+}
+
+.glow-dodger {
+  box-shadow: 0 0 24px -2px rgba(2, 132, 199, 0.35);
+}
+
+.glow-crimson {
+  box-shadow: 0 0 24px -2px rgba(239, 68, 68, 0.4);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 18px -2px rgba(56, 189, 248, 0.35);
+}
+
+/* Custom scrollbar for dark tech aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
