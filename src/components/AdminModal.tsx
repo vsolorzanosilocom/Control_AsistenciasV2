@@ -25,6 +25,8 @@ import {
   Clock,
   Send,
   Power,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   AsistenciaRecord,
@@ -68,12 +70,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [activeTab, setActiveTab] = useState<TabType>('resumen');
   const [isAdminAuth, setIsAdminAuth] = useState<boolean>(() => StorageService.isAdminSessionActive());
   const [adminInput, setAdminInput] = useState<string>('');
+  const [showAdminPass, setShowAdminPass] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>('');
 
   const handleLogout = () => {
     setIsAdminAuth(false);
     StorageService.setAdminSessionActive(false);
     setAdminInput('');
+    setShowAdminPass(false);
   };
 
   // Filters for Resumen tab
@@ -156,7 +160,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     const targetAdmin = (config.adminEmail || 'silocomca').trim().toLowerCase();
 
     if (!input) {
-      setAuthError('Por favor ingresa el ID o usuario del administrador.');
+      setAuthError('Por favor ingresa la credencial de acceso autorizada.');
       return;
     }
 
@@ -171,9 +175,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       StorageService.setAdminSessionActive(true);
       setAuthError('');
     } else {
-      setAuthError(
-        `Acceso Denegado: "${adminInput}" no coincide con el Administrador autorizado.`
-      );
+      setAuthError('Acceso Denegado: Credencial no autorizada.');
     }
   };
 
@@ -650,20 +652,33 @@ function respuestaJSON(obj) {
             <h3 className="font-display text-xl font-bold text-white mb-2">
               Autenticación de Administrador
             </h3>
-            <p className="text-xs text-slate-300 mb-6 leading-relaxed">
-              Ingresa el ID o usuario del Administrador registrado en la celda D2
-              de la hoja de Configuración ({config.adminEmail || 'silocomca'}).
+            <p className="text-xs text-slate-400 mb-6 leading-relaxed max-w-sm">
+              Ingresa la credencial autorizada para acceder al panel de administración y control de asistencia.
             </p>
 
             <form onSubmit={handleVerifyAdmin} className="w-full space-y-4">
-              <input
-                type="text"
-                value={adminInput}
-                onChange={(e) => setAdminInput(e.target.value)}
-                placeholder="Ej: silocomca"
-                className="w-full h-12 px-4 rounded-xl bg-[#131c2e] border border-slate-700 text-white font-mono text-sm placeholder-slate-500 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 outline-none"
-                autoFocus
-              />
+              <div className="relative">
+                <input
+                  type={showAdminPass ? 'text' : 'password'}
+                  value={adminInput}
+                  onChange={(e) => setAdminInput(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full h-12 pl-4 pr-11 rounded-xl bg-[#131c2e] border border-slate-700 text-white font-mono text-sm placeholder-slate-600 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 outline-none tracking-wider"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAdminPass(!showAdminPass)}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
+                  title={showAdminPass ? 'Ocultar credencial' : 'Mostrar credencial'}
+                >
+                  {showAdminPass ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
 
               {authError && (
                 <div className="text-xs font-mono text-rose-400 bg-rose-950/40 p-2.5 rounded-lg border border-rose-900/60 flex items-center gap-2">
