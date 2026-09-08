@@ -7,6 +7,7 @@ import { FeedbackModal, ModalData } from './components/FeedbackModal';
 import { AdminModal } from './components/AdminModal';
 import { StorageService } from './services/storage';
 import { SheetsSyncService } from './services/sheetsSync';
+import { NotificationService } from './services/notificationService';
 import { AsistenciaRecord, GPSPosition, OfficeConfig } from './types';
 import { ShieldCheck, Cloud, RefreshCw } from 'lucide-react';
 
@@ -70,6 +71,10 @@ export default function App() {
   // Cargar al montar la aplicación
   useEffect(() => {
     syncFromCloud(config);
+    NotificationService.startScheduler();
+    return () => {
+      NotificationService.stopScheduler();
+    };
   }, [syncFromCloud]);
 
   const handleRecordAdded = (newRecord: AsistenciaRecord) => {

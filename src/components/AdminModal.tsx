@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Shield,
@@ -109,6 +109,70 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [isAutoClosing, setIsAutoClosing] = useState<boolean>(false);
   const [autoCloseResult, setAutoCloseResult] = useState<string | null>(null);
   const [isSyncingEmployee, setIsSyncingEmployee] = useState<boolean>(false);
+
+  // Countdown & Live monitoring state
+  const [countdownSec, setCountdownSec] = useState<number | null>(null);
+  const [countdownActive, setCountdownActive] = useState<boolean>(false);
+  const [force0830Test, setForce0830Test] = useState<boolean>(() => NotificationService.isForceTest0830Enabled());
+  const [resetFlagsMsg, setResetFlagsMsg] = useState<string>('');
+  const [caracasLiveTime, setCaracasLiveTime] = useState<string>(() => NotificationService.getCaracasTimeInfo().formattedTime);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCaracasLiveTime(NotificationService.getCaracasTimeInfo().formattedTime);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleStartCountdownTest = async () => {
+    setNotifTestResult(null);
+    const granted = await PushService.requestPermission();
+    if (!granted) {
+      setNotifTestResult({
+        id: 'countdown_test',
+        msg: 'Permiso de notificaciones no concedido o bloqueado en el navegador.',
+        success: false,
+      });
+      return;
+    }
+
+    setCountdownActive(true);
+    NotificationService.startCountdownTest(
+      30,
+      (rem) => {
+        setCountdownSec(rem);
+      },
+      (success) => {
+        setCountdownActive(false);
+        setCountdownSec(null);
+        setNotifTestResult({
+          id: 'countdown_test',
+          msg: success
+            ? '¡Prueba en 30s completada con éxito! La notificación autónoma llegó sola al dispositivo.'
+            : 'El temporizador concluyó pero el navegador bloqueó la emisión.',
+          success,
+        });
+      }
+    );
+  };
+
+  const handleCancelCountdownTest = () => {
+    NotificationService.cancelCountdownTest();
+    setCountdownActive(false);
+    setCountdownSec(null);
+  };
+
+  const handleResetDailyFlags = () => {
+    NotificationService.resetTodayNotificationFlags();
+    setResetFlagsMsg('¡Banderas del día restablecidas! La app volverá a evaluar las alertas de hoy.');
+    setTimeout(() => setResetFlagsMsg(''), 4000);
+  };
+
+  const handleToggleForce0830 = () => {
+    const nextVal = !force0830Test;
+    NotificationService.setForceTest0830Today(nextVal);
+    setForce0830Test(nextVal);
+  };
 
   const handleTestReminder = async (type: '0745_entrada' | '0830_olvido' | '1630_salida', forceSimulateNoPunch = false) => {
     setNotifTestResult(null);
@@ -1369,6 +1433,96 @@ function respuestaJSON(obj) {
                     <p className="text-xs text-slate-300 font-mono leading-relaxed">
                       El sistema gestiona los recordatorios locales y el cierre automático conforme al horario laboral de Silocom C.A.:
                     </p>
+
+                    {/* Live Caracas Clock & Autonomous Scheduler Monitor */}
+                    <div className="p-4 rounded-xl bg-[#0b1326] border border-violet-500/40 space-y-3.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-700/60 pb-3">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-5 h-5 text-emerald-400 animate-pulse" />
+                          <div>
+                            <div className="text-xs font-mono text-slate-400">Hora Caracas (Oficial):</div>
+                            <div className="text-base font-mono font-bold text-emerald-300">
+                              {caracasLiveTime}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                          <span className="text-[11px] font-mono text-emerald-300 font-bold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30">
+                            Vigilante Activo (Cada 20s y en desbloqueo)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Autonomous 30-Second Countdown Test */}
+                      <div className="p-3 rounded-lg bg-violet-950/30 border border-violet-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-mono font-bold text-white flex items-center gap-1.5">
+                            <span>⏱️ Probar Disparo Automático (en 30 seg)</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 leading-tight">
+                            Inicia la cuenta regresiva, <strong>sal de la app o bloquea el teléfono</strong>; la notificación saltará sola al completarse el tiempo.
+                          </p>
+                        </div>
+                        <div className="shrink-0">
+                          {countdownActive ? (
+                            <div className="flex items-center gap-2">
+                              <span className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-mono font-bold animate-pulse">
+                                Esperando... {countdownSec}s
+                              </span>
+                              <button
+                                type="button"
+                                onClick={handleCancelCountdownTest}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleStartCountdownTest}
+                              className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-mono font-bold shadow-lg shadow-violet-600/25 transition cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              <span>Iniciar Prueba (30s)</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Diagnostic & Reset Actions */}
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleResetDailyFlags}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[11px] font-mono transition cursor-pointer flex items-center gap-1.5"
+                          title="Permite que las alertas programadas vuelvan a sonar hoy aunque ya hayan sido disparadas previamente"
+                        >
+                          <RefreshCw className="w-3 h-3 text-sky-400" />
+                          <span>Restablecer Alertas de Hoy</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleToggleForce0830}
+                          className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-mono transition cursor-pointer flex items-center gap-1.5 ${
+                            force0830Test
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold'
+                              : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+                          }`}
+                          title="Fuerza la alerta de las 08:30 AM para que suene hoy incluso si ya tienes entrada registrada"
+                        >
+                          <span>{force0830Test ? '✓ Forzar Alerta 08:30 AM: SÍ' : '○ Forzar Alerta 08:30 AM: NO'}</span>
+                        </button>
+                      </div>
+
+                      {resetFlagsMsg && (
+                        <div className="text-[11px] font-mono text-emerald-300 bg-emerald-950/30 p-2 rounded-lg border border-emerald-500/30">
+                          {resetFlagsMsg}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Schedule Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
