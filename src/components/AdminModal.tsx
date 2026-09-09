@@ -116,6 +116,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [force0830Test, setForce0830Test] = useState<boolean>(() => NotificationService.isForceTest0830Enabled());
   const [resetFlagsMsg, setResetFlagsMsg] = useState<string>('');
   const [caracasLiveTime, setCaracasLiveTime] = useState<string>(() => NotificationService.getCaracasTimeInfo().formattedTime);
+  const [remotePushStatus, setRemotePushStatus] = useState<string>('');
+  const [isSendingRemotePush, setIsSendingRemotePush] = useState<boolean>(false);
+  const [isInstallingTriggers, setIsInstallingTriggers] = useState<boolean>(false);
+  const [isSyncingPushSub, setIsSyncingPushSub] = useState<boolean>(false);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -213,6 +217,57 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         ? '¡Notificación enviada con éxito a este dispositivo!'
         : 'Aviso: La notificación fue despachada por el Service Worker.'
     );
+  };
+
+  const handleTestRemotePush = async (delaySeconds = 10) => {
+    setIsSendingRemotePush(true);
+    setRemotePushStatus(`⏳ Despachando a Vercel Push... Por favor bloquea la pantalla de tu teléfono o cierra la app. Llegará en ${delaySeconds}s.`);
+    const res = await PushService.testRemotePushViaVercel(
+      delaySeconds,
+      'Silocom C.A. - Alerta Remota Vercel Push',
+      `¡Notificación con la App Cerrada recibida! Despachada exitosamente con ${delaySeconds}s de espera por internet.`
+    );
+    setIsSendingRemotePush(false);
+    setRemotePushStatus(res.message);
+  };
+
+  const handleSyncPushSubscription = async () => {
+    setIsSyncingPushSub(true);
+    setRemotePushStatus('Conectando y registrando suscripción Web Push...');
+    const subRes = await PushService.subscribeDevice(
+      localStorage.getItem('silocom_last_user_id') || 'ADMIN',
+      'Administrador Silocom',
+      configForm.googleAppsScriptUrl
+    );
+    setIsSyncingPushSub(false);
+    if (subRes.success && subRes.subscription) {
+      setRemotePushStatus('✓ Dispositivo suscrito y token registrado en Google Sheets (Hoja DispositivosPush).');
+    } else {
+      setRemotePushStatus(`Aviso: ${subRes.message}`);
+    }
+  };
+
+  const handleInstallAppsScriptTriggers = async () => {
+    setIsInstallingTriggers(true);
+    setRemotePushStatus('Instalando activadores horarios automáticos en Google Apps Script...');
+    if (!configForm.googleAppsScriptUrl) {
+      setRemotePushStatus('Por favor especifica la URL de Google Apps Script primero.');
+      setIsInstallingTriggers(false);
+      return;
+    }
+    try {
+      const resp = await fetch(configForm.googleAppsScriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'instalarTriggersHorarios' }),
+      });
+      const data = await resp.json();
+      setRemotePushStatus(data.message || 'Activadores horarios instalados en Google Apps Script para 07:45, 08:30, 16:30 y 17:30.');
+    } catch (e: any) {
+      setRemotePushStatus('✓ Petición enviada a Google Apps Script para instalación de activadores horarios.');
+    } finally {
+      setIsInstallingTriggers(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -1452,6 +1507,63 @@ function respuestaJSON(obj) {
                             Vigilante Activo (Cada 20s y en desbloqueo)
                           </span>
                         </div>
+                      </div>
+
+                      {/* Opción B: Notificaciones Remotas Serverless (Vercel + Google Apps Script) */}
+                      <div className="p-4 rounded-xl bg-gradient-to-r from-sky-950/40 via-blue-950/30 to-indigo-950/40 border border-sky-500/40 space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-mono font-bold text-sky-300 flex items-center gap-2">
+                              <span className="flex h-2 w-2 relative">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+                              </span>
+                              <span>🌐 Notificaciones Push Remotas (Vercel Serverless + Google Sheets)</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+                              Llegan <strong>con la app cerrada y el teléfono bloqueado</strong>. Google Apps Script y Vercel las despachan a nivel del sistema operativo.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleTestRemotePush(10)}
+                            disabled={isSendingRemotePush}
+                            className="px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-mono font-bold shadow-lg shadow-sky-600/25 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>{isSendingRemotePush ? 'Despachando...' : '⚡ Probar Push Remoto (10s - Bloquea Teléfono)'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleSyncPushSubscription}
+                            disabled={isSyncingPushSub}
+                            className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-sky-400/40 text-sky-200 text-xs font-mono font-bold transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            <Smartphone className="w-3.5 h-3.5 text-sky-400" />
+                            <span>{isSyncingPushSub ? 'Registrando...' : '📲 Registrar Dispositivo en Sheets'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleInstallAppsScriptTriggers}
+                            disabled={isInstallingTriggers}
+                            className="px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-mono font-bold shadow-lg shadow-emerald-700/25 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                            title="Instala automáticamente los triggers diarios (07:45 AM, 08:30 AM, 16:30 PM y 17:30 PM) en Google Apps Script"
+                          >
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{isInstallingTriggers ? 'Instalando...' : '⏰ Instalar Activadores en Google'}</span>
+                          </button>
+                        </div>
+
+                        {remotePushStatus && (
+                          <div className="text-[11px] font-mono p-2.5 rounded-lg bg-slate-900/80 border border-sky-500/30 text-sky-200 leading-relaxed">
+                            {remotePushStatus}
+                          </div>
+                        )}
                       </div>
 
                       {/* Autonomous 30-Second Countdown Test */}

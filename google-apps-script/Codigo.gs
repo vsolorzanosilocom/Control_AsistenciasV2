@@ -23,6 +23,9 @@
 const CONFIG = {
   HOJA_ASISTENCIAS: 'Asistencias',
   HOJA_CONFIG: 'Configuracion',
+  HOJA_PUSH: 'DispositivosPush',
+  URL_VERCEL_PUSH: 'https://silocom.vercel.app/api/send-push',
+  PUSH_SECRET: 'silocom_push_sec_2026',
   LATITUD_OFICINA: 10.494505,
   LONGITUD_OFICINA: -66.831454,
   RADIO_MAX_KM: 0.06,          // 0.06 km = 60 metros
@@ -76,6 +79,14 @@ function doGet(e) {
       });
     }
 
+    if (action === 'probarPushRemoto') {
+      return respuestaJSON(enviarPushRemoto(
+        'Silocom C.A. - Notificación Remota',
+        'Prueba de despacho remoto ejecutada desde Google Apps Script.',
+        'silocom-test-remoto'
+      ));
+    }
+
     return respuestaJSON({
       status: 'ok',
       message: 'API Silocom Asistencias en línea.',
@@ -122,6 +133,14 @@ function doPost(e) {
       return respuestaJSON(obtenerDatosCompletos());
     } else if (action === 'obtenerConfiguracion') {
       return respuestaJSON({ success: true, config: obtenerConfiguracionDinamica() });
+    } else if (action === 'guardarSuscripcionPush') {
+      return respuestaJSON(guardarSuscripcionPush(data));
+    } else if (action === 'enviarPushRemoto') {
+      return respuestaJSON(enviarPushRemoto(data.titulo, data.mensaje || data.cuerpo, data.tag, data.filtroUserId));
+    } else if (action === 'instalarTriggersHorarios') {
+      return respuestaJSON(instalarTriggersHorarios());
+    } else if (action === 'eliminarTriggersHorarios') {
+      return respuestaJSON(eliminarTriggersHorarios());
     } else {
       return respuestaJSON({
         success: false,
@@ -551,11 +570,320 @@ function obtenerConfiguracionDinamica() {
             configDinamica.radioMaxKm = parsed > 1 ? parsed / 1000 : parsed;
           }
         }
+        if (val.includes('vercel') && datos[r][c + 1]) {
+          configDinamica.urlVercelPush = datos[r][c + 1].toString().trim();
+        }
       }
     }
   } catch (e) {}
 
   return configDinamica;
+}
+
+// ================= GESTIÓN DE NOTIFICACIONES PUSH REMOTAS =================
+
+/**
+ * Registra o actualiza la suscripción Web Push de un dispositivo en la hoja "DispositivosPush"
+ */
+function guardarSuscripcionPush(datos) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let hojaPush = ss.getSheetByName(CONFIG.HOJA_PUSH);
+
+    if (!hojaPush) {
+      hojaPush = ss.insertSheet(CONFIG.HOJA_PUSH);
+      hojaPush.appendRow(['FECHA_REGISTRO', 'ID_USUARIO', 'NOMBRE', 'ENDPOINT', 'P256DH', 'AUTH', 'ESTADO']);
+      hojaPush.getRange('A1:G1').setBackground('#0f172a').setFontColor('#ffffff').setFontWeight('bold');
+      hojaPush.setFrozenRows(1);
+    }
+
+    const endpoint = (datos.endpoint || (datos.subscription && datos.subscription.endpoint) || '').toString().trim();
+    if (!endpoint) {
+      return { success: false, message: 'Falta endpoint en la suscripción Push.' };
+    }
+
+    const p256dh = (datos.p256dh || (datos.subscription && datos.subscription.keys && datos.subscription.keys.p256dh) || '').toString().trim();
+    const auth = (datos.auth || (datos.subscription && datos.subscription.keys && datos.subscription.keys.auth) || '').toString().trim();
+    const empId = (datos.empId || datos.idUsuario || 'GENERAL').toString().trim();
+    const empNombre = (datos.nombre || datos.empNombre || 'Colaborador Silocom').toString().trim();
+    const fechaHora = Utilities.formatDate(new Date(), 'America/Caracas', 'dd/MM/yyyy HH:mm:ss');
+
+    const filas = hojaPush.getDataRange().getValues();
+    let filaExistente = -1;
+
+    for (let i = 1; i < filas.length; i++) {
+      if (filas[i][3] && filas[i][3].toString().trim() === endpoint) {
+        filaExistente = i + 1;
+        break;
+      }
+    }
+
+    if (filaExistente > 0) {
+      hojaPush.getRange(filaExistente, 1, 1, 7).setValues([[
+        fechaHora, empId, empNombre, endpoint, p256dh, auth, 'ACTIVO'
+      ]]);
+    } else {
+      hojaPush.appendRow([fechaHora, empId, empNombre, endpoint, p256dh, auth, 'ACTIVO']);
+    }
+
+    return { success: true, message: 'Suscripción Push registrada con éxito para ' + empNombre };
+  } catch (err) {
+    return { success: false, message: 'Error al registrar suscripción Push: ' + err.message };
+  }
+}
+
+/**
+ * Obtiene la lista de suscripciones activas registradas en la hoja DispositivosPush
+ */
+function obtenerSuscripcionesPushActivas(filtroUserId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const hojaPush = ss.getSheetByName(CONFIG.HOJA_PUSH);
+  if (!hojaPush) return [];
+
+  const filas = hojaPush.getDataRange().getValues();
+  const subs = [];
+
+  for (let i = 1; i < filas.length; i++) {
+    const estado = (filas[i][6] || '').toString().trim().toUpperCase();
+    if (estado !== 'ACTIVO') continue;
+
+    const empId = (filas[i][1] || '').toString().trim().toLowerCase();
+    if (filtroUserId && empId !== filtroUserId.toString().trim().toLowerCase() && empId !== 'general') {
+      continue;
+    }
+
+    const endpoint = (filas[i][3] || '').toString().trim();
+    const p256dh = (filas[i][4] || '').toString().trim();
+    const auth = (filas[i][5] || '').toString().trim();
+
+    if (endpoint && p256dh && auth) {
+      subs.push({
+        endpoint: endpoint,
+        keys: { p256dh: p256dh, auth: auth },
+        empId: filas[i][1],
+        nombre: filas[i][2]
+      });
+    }
+  }
+
+  return subs;
+}
+
+/**
+ * Despacha una notificación Push remota hacia la API de Vercel (/api/send-push)
+ */
+function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
+  try {
+    const subs = obtenerSuscripcionesPushActivas(filtroUserId);
+    if (subs.length === 0) {
+      return { success: true, message: 'No hay dispositivos suscritos para recibir push.', enviados: 0 };
+    }
+
+    const cfg = obtenerConfiguracionDinamica();
+    const urlVercel = cfg.urlVercelPush || CONFIG.URL_VERCEL_PUSH;
+
+    const payload = {
+      secret: CONFIG.PUSH_SECRET,
+      subscriptions: subs,
+      notification: {
+        title: titulo || 'Silocom C.A. - Recordatorio',
+        body: cuerpo || 'Recordatorio de asistencia de jornada laboral.',
+        tag: tag || 'silocom-push-reminder'
+      }
+    };
+
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(urlVercel, options);
+    const code = response.getResponseCode();
+    const text = response.getContentText();
+
+    let jsonRes = {};
+    try { jsonRes = JSON.parse(text); } catch (e) {}
+
+    // Desactivar endpoints que hayan caducado en la red
+    if (jsonRes && Array.isArray(jsonRes.expiredEndpoints) && jsonRes.expiredEndpoints.length > 0) {
+      desactivarEndpointsCaducados(jsonRes.expiredEndpoints);
+    }
+
+    return {
+      success: code >= 200 && code < 300,
+      statusCode: code,
+      enviados: jsonRes.sent || 0,
+      fallidos: jsonRes.failed || 0,
+      message: 'Despacho completado. Respuesta Vercel: ' + text
+    };
+  } catch (err) {
+    return { success: false, message: 'Error en llamada a Vercel Push: ' + err.message };
+  }
+}
+
+/**
+ * Marca como INACTIVO cualquier endpoint caducado reportado por Vercel
+ */
+function desactivarEndpointsCaducados(endpointsCaducados) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const hojaPush = ss.getSheetByName(CONFIG.HOJA_PUSH);
+    if (!hojaPush) return;
+
+    const filas = hojaPush.getDataRange().getValues();
+    for (let i = 1; i < filas.length; i++) {
+      const ep = (filas[i][3] || '').toString().trim();
+      if (endpointsCaducados.indexOf(ep) !== -1) {
+        hojaPush.getRange(i + 1, 7).setValue('INACTIVO');
+      }
+    }
+  } catch (e) {}
+}
+
+// ================= DISPARADORES PROGRAMADOS (TIME-DRIVEN TRIGGERS) =================
+
+/**
+ * 07:45 AM - Recordatorio diario de Entrada (Lunes a Viernes)
+ */
+function disparadorManana0745() {
+  const hoy = new Date();
+  const diaSemana = hoy.getDay();
+  // 0 = Domingo, 6 = Sábado
+  if (diaSemana === 0 || diaSemana === 6) return;
+
+  enviarPushRemoto(
+    'Silocom C.A. - Recordatorio de Entrada (07:45 AM)',
+    'Buenos días, recuerda registrar tu ENTRADA al ingresar a la sede Silocom.',
+    'silocom-0745-entrada'
+  );
+}
+
+/**
+ * 08:30 AM - Aviso por Olvido (Valida en tiempo real si el empleado YA marcó hoy)
+ */
+function disparadorOlvido0830() {
+  const hoy = new Date();
+  const diaSemana = hoy.getDay();
+  if (diaSemana === 0 || diaSemana === 6) return;
+
+  const fechaHoyStr = Utilities.formatDate(hoy, 'America/Caracas', 'dd/MM/yyyy');
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
+  if (!hojaAsistencias) return;
+
+  // Empleados que ya marcaron entrada hoy
+  const entradasHoy = {};
+  const datos = hojaAsistencias.getDataRange().getValues();
+  for (let i = 1; i < datos.length; i++) {
+    const id = (datos[i][0] || '').toString().trim().toLowerCase();
+    const tipo = (datos[i][2] || '').toString().trim().toUpperCase();
+    const fechaHora = (datos[i][3] || '').toString().trim();
+    if (fechaHora.startsWith(fechaHoyStr) && tipo === 'ENTRADA') {
+      entradasHoy[id] = true;
+    }
+  }
+
+  // Lista de empleados activos
+  const empleados = obtenerListaEmpleados();
+  for (let j = 0; j < empleados.length; j++) {
+    const empId = empleados[j].id.toLowerCase();
+    // Si NO ha marcado entrada hoy, emitir la alerta a su teléfono
+    if (!entradasHoy[empId]) {
+      enviarPushRemoto(
+        'Silocom C.A. - Aviso de Asistencia (08:30 AM)',
+        'Atención ' + empleados[j].nombre + ': Aún no has registrado tu ENTRADA el día de hoy. Recuerda marcar tu asistencia al estar en sede.',
+        'silocom-0830-olvido',
+        empId
+      );
+    }
+  }
+}
+
+/**
+ * 16:30 PM - Recordatorio de Salida (Lunes a Viernes)
+ */
+function disparadorSalida1630() {
+  const hoy = new Date();
+  const diaSemana = hoy.getDay();
+  if (diaSemana === 0 || diaSemana === 6) return;
+
+  enviarPushRemoto(
+    'Silocom C.A. - Fin de Jornada Laboral (04:30 PM)',
+    'Buenas tardes, recuerda registrar tu SALIDA al culminar tu jornada laboral en la sede Silocom.',
+    'silocom-1630-salida'
+  );
+}
+
+/**
+ * Instala todos los activadores horarios en Google Apps Script en un solo clic
+ */
+function instalarTriggersHorarios() {
+  eliminarTriggersHorarios();
+
+  // 07:45 AM (Aproximado ventana 7 a 8 o nearMinute 45)
+  ScriptApp.newTrigger('disparadorManana0745')
+    .timeBased()
+    .atHour(7)
+    .nearMinute(45)
+    .everyDays(1)
+    .inTimezone('America/Caracas')
+    .create();
+
+  // 08:30 AM (Validación de olvido)
+  ScriptApp.newTrigger('disparadorOlvido0830')
+    .timeBased()
+    .atHour(8)
+    .nearMinute(30)
+    .everyDays(1)
+    .inTimezone('America/Caracas')
+    .create();
+
+  // 16:30 PM (Recordatorio de salida)
+  ScriptApp.newTrigger('disparadorSalida1630')
+    .timeBased()
+    .atHour(16)
+    .nearMinute(30)
+    .everyDays(1)
+    .inTimezone('America/Caracas')
+    .create();
+
+  // 17:30 PM (Cierre Automático de Turnos)
+  ScriptApp.newTrigger('ejecutarCierreAutomatico')
+    .timeBased()
+    .atHour(17)
+    .nearMinute(30)
+    .everyDays(1)
+    .inTimezone('America/Caracas')
+    .create();
+
+  return {
+    success: true,
+    message: 'Triggers horarios instalados con éxito para 07:45 AM, 08:30 AM, 16:30 PM y 17:30 PM (Hora Caracas).'
+  };
+}
+
+/**
+ * Elimina los triggers horarios para evitar duplicidades
+ */
+function eliminarTriggersHorarios() {
+  const triggers = ScriptApp.getProjectTriggers();
+  let count = 0;
+  for (let i = 0; i < triggers.length; i++) {
+    const fnName = triggers[i].getHandlerFunction();
+    if (
+      fnName === 'disparadorManana0745' ||
+      fnName === 'disparadorOlvido0830' ||
+      fnName === 'disparadorSalida1630' ||
+      fnName === 'ejecutarCierreAutomatico' ||
+      fnName === 'ejecutarCierreAutomaticoEnHorario'
+    ) {
+      ScriptApp.deleteTrigger(triggers[i]);
+      count++;
+    }
+  }
+  return { success: true, message: 'Se eliminaron ' + count + ' triggers antiguos.' };
 }
 
 /**

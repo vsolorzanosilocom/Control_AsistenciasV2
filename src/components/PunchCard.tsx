@@ -14,6 +14,7 @@ import {
 import { GPSPosition, OfficeConfig, RegistroTipo, AsistenciaRecord } from '../types';
 import { StorageService } from '../services/storage';
 import { SheetsSyncService } from '../services/sheetsSync';
+import { PushService } from '../services/pushService';
 import { getDeviceId } from '../utils/device';
 import { ModalData } from './FeedbackModal';
 
@@ -200,6 +201,9 @@ export const PunchCard: React.FC<PunchCardProps> = ({
         lng: currentPosition.lng,
         nombre: nombreEmpleado,
       });
+
+      // Registrar suscripción Push remota para recordatorios automáticos
+      PushService.subscribeDevice(trimmedId, nombreEmpleado, config.googleAppsScriptUrl).catch(() => {});
 
       // Clear input ID and employee status to leave screen 100% clean for next user
       setUserId('');
