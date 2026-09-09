@@ -193,6 +193,10 @@ export const PunchCard: React.FC<PunchCardProps> = ({
       onRecordAdded(nuevoRegistro);
 
       // 6. Synchronize with Google Sheets via Apps Script Web App
+      const estadoCalculado = currentPosition.isWithinRange
+        ? `DENTRO DE RANGO (${Math.round(currentPosition.distanceMetros)}m)`
+        : 'DENTRO DE RANGO';
+
       const syncResult = await SheetsSyncService.registrarEnGoogleSheets(config, {
         id: trimmedId,
         tipo: tipo,
@@ -200,6 +204,7 @@ export const PunchCard: React.FC<PunchCardProps> = ({
         lat: currentPosition.lat,
         lng: currentPosition.lng,
         nombre: nombreEmpleado,
+        estado: estadoCalculado,
       });
 
       // Registrar suscripción Push remota para recordatorios automáticos

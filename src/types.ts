@@ -39,6 +39,9 @@ export interface OfficeConfig {
   toleranciaAvisoEntradaMin: number;
   horaEntrada: number; // 8 = 08:00
   horaSalida: number; // 17 = 17:00
+  recordatorioEntrada?: string; // "07:45"
+  avisoOlvidoEntrada?: string; // "08:30"
+  avisoPrevioSalida?: string; // "16:30"
   ventanaEntradaInicio: number; // 7 = 07:00
   ventanaEntradaFin: number; // 9 = 09:00
   ventanaSalidaInicio: number; // 16 = 16:00

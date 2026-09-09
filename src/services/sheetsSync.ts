@@ -30,6 +30,7 @@ export class SheetsSyncService {
       lat: number;
       lng: number;
       nombre?: string;
+      estado?: string;
     }
   ): Promise<SyncResult> {
     const appsScriptUrl = config.googleAppsScriptUrl?.trim();
@@ -56,6 +57,7 @@ export class SheetsSyncService {
           lat: payload.lat,
           lng: payload.lng,
           nombre: payload.nombre,
+          estado: payload.estado,
         }),
       });
 

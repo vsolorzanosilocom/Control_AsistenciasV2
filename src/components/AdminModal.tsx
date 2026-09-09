@@ -38,6 +38,7 @@ import { StorageService } from '../services/storage';
 import { SheetsSyncService } from '../services/sheetsSync';
 import { PushService } from '../services/pushService';
 import { NotificationService } from '../services/notificationService';
+import { getGasScriptCode } from '../data/gasScript';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -392,308 +393,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     onRefreshRecords();
   };
 
-  const gasScriptCode = `/**
- * =========================================================================
- * SISTEMA DE CONTROL DE ASISTENCIAS - SILOCOM C.A.
- * RIF: J-30725192-1
- * Archivo: Codigo.gs (Google Apps Script)
- * =========================================================================
- * Instrucciones:
- * 1. Abre tu Google Sheets "Control de Asistencias - Silocom".
- * 2. Extensiones > Apps Script y pega este código completo.
- * 3. Implementar > Nueva implementación > Aplicación web:
- *    - Ejecutar como: "Yo"
- *    - Quién tiene acceso: "Cualquier persona" (Anyone)
- * 4. Pega la URL generada en la pestaña "Sincronización Sheets & Horarios".
- * 5. Para el Cierre Automático diario (17:30): ejecuta "instalarTriggerCierreAutomatico".
- * =========================================================================
- */
-
-const CONFIG = {
-  HOJA_ASISTENCIAS: 'Asistencias',
-  HOJA_CONFIG: 'Configuracion',
-  LATITUD_OFICINA: ${config.latitud},
-  LONGITUD_OFICINA: ${config.longitud},
-  RADIO_MAX_KM: ${config.radioMaxKm},
-  TOLERANCIA_MIN: 30,
-  HORA_ENTRADA: 8,
-  HORA_SALIDA: 17,
-  VENTANA_ENTRADA_INI: 7,
-  VENTANA_ENTRADA_FIN: 9,
-  VENTANA_SALIDA_INI: 16,
-  VENTANA_SALIDA_FIN: 18,
-  CIERRE_AUTOMATICO: 17.5,
-  ADMIN_EMAIL: 'vsolorzano.silocom@gmail.com',
-  FILA_INICIO_EMPLEADOS: 7,
-  COL_ID: 1,
-  COL_NOMBRE: 2,
-  COL_DISPOSITIVO: 3
-};
-
-function doGet(e) {
-  try {
-    const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'ping';
-    if (action === 'ping') {
-      return respuestaJSON({ status: 'ok', app: 'Silocom Asistencias', timestamp: new Date().toISOString() });
-    }
-    if (action === 'obtenerConfiguracion') {
-      return respuestaJSON({ success: true, config: obtenerConfiguracionDinamica() });
-    }
-    if (action === 'obtenerDatos' || action === 'obtenerAsistencias') {
-      return respuestaJSON(obtenerDatosCompletos());
-    }
-    if (action === 'obtenerEmpleados') {
-      return respuestaJSON({ success: true, empleados: obtenerListaEmpleados() });
-    }
-    return respuestaJSON({ status: 'ok', message: 'API Silocom Asistencias en línea.' });
-  } catch (err) {
-    return respuestaJSON({ success: false, message: err.message });
-  }
-}
-
-function doPost(e) {
-  try {
-    let data;
-    if (e && e.postData && e.postData.contents) {
-      data = JSON.parse(e.postData.contents);
-    } else if (e && e.parameter) {
-      data = e.parameter;
-    }
-    const action = data.action || 'registrarAsistencia';
-    if (action === 'registrarAsistencia') return respuestaJSON(procesarRegistroAsistencia(data));
-    if (action === 'guardarEmpleado') return respuestaJSON(guardarEmpleadoEnConfig(data));
-    if (action === 'vincularDispositivo') return respuestaJSON(vincularDispositivoEnConfig(data));
-    if (action === 'ejecutarCierreAutomatico') return respuestaJSON(ejecutarCierreAutomatico());
-    if (action === 'obtenerDatos') return respuestaJSON(obtenerDatosCompletos());
-    return respuestaJSON({ success: false, message: 'Acción no reconocida: ' + action });
-  } catch (err) {
-    return respuestaJSON({ success: false, message: err.message });
-  }
-}
-
-function procesarRegistroAsistencia(datos) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
-  if (!hojaAsistencias) return { success: false, message: 'Hoja Asistencias no existe' };
-
-  const idUsuario = (datos.id || '').toString().trim().toLowerCase();
-  const tipoRegistro = (datos.tipo || 'ENTRADA').toUpperCase().trim();
-  const nombreEmpleado = (datos.nombre || idUsuario).toString().trim();
-  const latitud = parseFloat(datos.lat);
-  const longitud = parseFloat(datos.lng);
-  const idDispositivo = (datos.idDispositivo || '').toString().trim();
-
-  const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
-  if (hojaConfig && idDispositivo) {
-    sincronizarDispositivoEnConfig(hojaConfig, idUsuario, nombreEmpleado, idDispositivo);
-  }
-
-  const fechaServidor = new Date();
-  const formatoFecha = Utilities.formatDate(fechaServidor, Session.getScriptTimeZone() || 'America/Caracas', 'dd/MM/yyyy HH:mm:ss');
-  const coordsStr = (!isNaN(latitud) && !isNaN(longitud)) ? latitud.toFixed(6) + ', ' + longitud.toFixed(6) : 'Sede Silocom';
-
-  // PROTECCIÓN DE FÓRMULAS: Escribe estrictamente en Columnas 1 a 6 (A a F).
-  // Las Columnas G (DIA) y H (MES) quedan intactas con sus fórmulas automáticas.
-  const proxFila = hojaAsistencias.getLastRow() + 1;
-  hojaAsistencias.getRange(proxFila, 1, 1, 6).setValues([[
-    idUsuario,
-    nombreEmpleado,
-    tipoRegistro,
-    formatoFecha,
-    coordsStr,
-    'DENTRO DE RANGO'
-  ]]);
-
-  return { success: true, message: '¡Registro guardado en Google Sheets!', fechaHora: formatoFecha };
-}
-
-function guardarEmpleadoEnConfig(datos) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
-  if (!hojaConfig) return { success: false, message: 'Hoja Configuracion no encontrada.' };
-
-  const id = (datos.id || '').toString().trim().toLowerCase();
-  const nombre = (datos.nombre || '').toString().trim();
-  const idDispositivo = (datos.idDispositivo || '').toString().trim();
-
-  const data = hojaConfig.getDataRange().getValues();
-  for (let r = CONFIG.FILA_INICIO_EMPLEADOS - 1; r < data.length; r++) {
-    if ((data[r][0] || '').toString().trim().toLowerCase() === id) {
-      if (nombre) hojaConfig.getRange(r + 1, 2).setValue(nombre);
-      if (idDispositivo) hojaConfig.getRange(r + 1, 3).setValue(idDispositivo);
-      return { success: true, message: 'Empleado actualizado en Sheets.' };
-    }
-  }
-
-  const proxFila = hojaConfig.getLastRow() + 1;
-  hojaConfig.getRange(proxFila, 1, 1, 3).setValues([[id, nombre || id, idDispositivo || '']]);
-  return { success: true, message: 'Colaborador creado en Google Sheets.' };
-}
-
-function vincularDispositivoEnConfig(datos) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
-  if (!hojaConfig) return { success: false, message: 'Hoja no encontrada.' };
-
-  const id = (datos.id || '').toString().trim().toLowerCase();
-  const idDispositivo = (datos.idDispositivo !== undefined) ? datos.idDispositivo.toString().trim() : '';
-
-  const data = hojaConfig.getDataRange().getValues();
-  for (let r = CONFIG.FILA_INICIO_EMPLEADOS - 1; r < data.length; r++) {
-    if ((data[r][0] || '').toString().trim().toLowerCase() === id) {
-      hojaConfig.getRange(r + 1, 3).setValue(idDispositivo);
-      return { success: true, message: 'Dispositivo actualizado en Sheets.' };
-    }
-  }
-  return { success: false, message: 'Empleado no encontrado.' };
-}
-
-function sincronizarDispositivoEnConfig(hojaConfig, idUsuario, nombreEmpleado, idDispositivo) {
-  try {
-    const data = hojaConfig.getDataRange().getValues();
-    for (let r = CONFIG.FILA_INICIO_EMPLEADOS - 1; r < data.length; r++) {
-      if ((data[r][0] || '').toString().trim().toLowerCase() === idUsuario.toLowerCase()) {
-        const dispActual = (data[r][2] || '').toString().trim();
-        if (!dispActual && idDispositivo) {
-          hojaConfig.getRange(r + 1, 3).setValue(idDispositivo);
-        }
-        return;
-      }
-    }
-  } catch (e) {}
-}
-
-function ejecutarCierreAutomatico() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
-  if (!hojaAsistencias) return { success: false, message: 'Hoja Asistencias no encontrada' };
-
-  const tz = Session.getScriptTimeZone() || 'America/Caracas';
-  const hoy = new Date();
-  const diaHoyStr = Utilities.formatDate(hoy, tz, 'dd/MM/yyyy');
-  const horaOficialSalida = diaHoyStr + ' 17:00:00';
-
-  const data = hojaAsistencias.getDataRange().getValues();
-  const empleadosConEntrada = {};
-  const empleadosConSalida = {};
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const id = (row[0] || '').toString().trim().toLowerCase();
-    const nombre = (row[1] || id).toString().trim();
-    const tipo = (row[2] || '').toString().trim().toUpperCase();
-    let fechaStr = (row[3] instanceof Date) ? Utilities.formatDate(row[3], tz, 'dd/MM/yyyy HH:mm:ss') : (row[3] || '').toString().trim();
-
-    if (fechaStr.startsWith(diaHoyStr)) {
-      if (tipo === 'ENTRADA') empleadosConEntrada[id] = nombre;
-      if (tipo === 'SALIDA') empleadosConSalida[id] = true;
-    }
-  }
-
-  const cerrados = [];
-  for (const empId in empleadosConEntrada) {
-    if (!empleadosConSalida[empId]) {
-      const proxFila = hojaAsistencias.getLastRow() + 1;
-      hojaAsistencias.getRange(proxFila, 1, 1, 6).setValues([[
-        empId,
-        empleadosConEntrada[empId],
-        'SALIDA',
-        horaOficialSalida,
-        'CIERRE AUTOMATICO / SISTEMA',
-        'CIERRE X SISTEMA'
-      ]]);
-      cerrados.push({ id: empId, nombre: empleadosConEntrada[empId] });
-    }
-  }
-
-  return {
-    success: true,
-    message: cerrados.length > 0 ? 'Se cerraron ' + cerrados.length + ' jornada(s) pendientes.' : 'No hay turnos abiertos pendientes.',
-    totalCerrados: cerrados.length
-  };
-}
-
-function instalarTriggerCierreAutomatico() {
-  const triggers = ScriptApp.getProjectTriggers();
-  for (let i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === 'ejecutarCierreAutomatico') {
-      ScriptApp.deleteTrigger(triggers[i]);
-    }
-  }
-  ScriptApp.newTrigger('ejecutarCierreAutomatico')
-    .timeBased()
-    .everyDays(1)
-    .atHour(17)
-    .nearMinute(30)
-    .inTimezone('America/Caracas')
-    .create();
-  return 'Activador instalado a las 17:30 (Caracas).';
-}
-
-function obtenerDatosCompletos() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
-  const registros = [];
-  const empleados = obtenerListaEmpleados();
-
-  if (hojaAsistencias) {
-    const dataAsist = hojaAsistencias.getDataRange().getValues();
-    const tz = Session.getScriptTimeZone() || 'America/Caracas';
-    for (let i = 1; i < dataAsist.length; i++) {
-      const row = dataAsist[i];
-      if (!row[0] && !row[1]) continue;
-      const id = (row[0] || '').toString().trim().toLowerCase();
-      const nombre = (row[1] || id).toString().trim();
-      const tipo = (row[2] || 'ENTRADA').toString().trim().toUpperCase();
-      let fechaHora = (row[3] instanceof Date) ? Utilities.formatDate(row[3], tz, 'dd/MM/yyyy HH:mm:ss') : (row[3] || '').toString().trim();
-      const ubicacion = (row[4] || '').toString().trim();
-      const estado = (row[5] || 'DENTRO DE RANGO').toString().trim();
-      const partesFecha = fechaHora.split(' ')[0] ? fechaHora.split(' ')[0].split('/') : [];
-      const dia = partesFecha[0] || '';
-      const numMes = parseInt(partesFecha[1] || '0', 10);
-      const meses = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-      const mes = meses[numMes] || '';
-      registros.push({ id, nombre, tipo, fechaHora, ubicacion, estado, dia, mes });
-    }
-  }
-  registros.reverse();
-  return { success: true, registros, empleados, config: obtenerConfiguracionDinamica() };
-}
-
-function obtenerListaEmpleados() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
-  const empleados = [];
-  if (!hojaConfig) return empleados;
-  const dataConfig = hojaConfig.getDataRange().getValues();
-  for (let r = CONFIG.FILA_INICIO_EMPLEADOS - 1; r < dataConfig.length; r++) {
-    const row = dataConfig[r];
-    const rawId = (row[0] !== undefined && row[0] !== null) ? row[0].toString().trim() : '';
-    const id = rawId.toLowerCase();
-    const nombre = (row[1] || '').toString().trim();
-    const dispositivo = (row[2] || '').toString().trim();
-    const esCabecera = !id || ['id', 'usuario', 'correo', 'email', 'id / correo', 'identificador', 'colaborador', 'empleado', 'parametro'].includes(id);
-    if (!esCabecera) {
-      empleados.push({ id: rawId, nombre: nombre || rawId, idDispositivo: dispositivo, activo: true });
-    }
-  }
-  return empleados;
-}
-
-function obtenerConfiguracionDinamica() {
-  return {
-    latitud: CONFIG.LATITUD_OFICINA,
-    longitud: CONFIG.LONGITUD_OFICINA,
-    radioMaxKm: CONFIG.RADIO_MAX_KM,
-    horaEntrada: CONFIG.HORA_ENTRADA,
-    horaSalida: CONFIG.HORA_SALIDA,
-    cierreAutomatico: CONFIG.CIERRE_AUTOMATICO
-  };
-}
-
-function respuestaJSON(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}`;
+  const gasScriptCode = getGasScriptCode(config);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-hidden">
@@ -1865,26 +1565,31 @@ function respuestaJSON(obj) {
                         GitHub con Vercel y selecciona el repositorio de Silocom.
                       </li>
                       <li>
-                        <strong>Variables de Entorno (Environment Variables):</strong>{' '}
-                        En los settings de Vercel, agrega:
-                        <ul className="pl-6 mt-1 space-y-1 list-disc text-slate-400">
+                        <strong>Variables de Entorno en Vercel (Settings &gt; Environment Variables):</strong>{' '}
+                        Para que el despliegue y las notificaciones Web Push funcionen al 100%, añade:
+                        <ul className="pl-6 mt-2 space-y-1.5 list-disc text-slate-300">
                           <li>
-                            <code>VITE_GOOGLE_APPS_SCRIPT_URL</code>: La URL de
-                            la Web App de Apps Script.
+                            <code>VITE_GOOGLE_APPS_SCRIPT_URL</code>:{' '}
+                            <span className="text-slate-400">URL de la Web App generada en Apps Script (termina en <code>/exec</code>).</span>
                           </li>
                           <li>
-                            <code>VITE_GOOGLE_SHEET_ID</code>: El ID de tu
-                            archivo de Google Sheets.
+                            <code>VAPID_PUBLIC_KEY</code>:{' '}
+                            <code className="text-emerald-300 text-[11px] select-all">BPzypta9empk_NjjOH_QA9UFQvK1ebLcIM2ZYtU6HE2bhYZG7ypV_Xl3i_7jWEV9mfR1NKsNeOFjjzfieJuG6l8</code>
                           </li>
                           <li>
-                            <code>VITE_ADMIN_EMAIL</code>:{' '}
-                            vsolorzano.silocom@gmail.com
+                            <code>VAPID_PRIVATE_KEY</code>:{' '}
+                            <code className="text-emerald-300 text-[11px] select-all">9myLo9LLLofaTgoQjFgKnkC47LPitx55tezrPtl7eTg</code>
                           </li>
                           <li>
-                            <code>VITE_OFFICE_LAT</code>: 10.494505
+                            <code>VAPID_SUBJECT</code>:{' '}
+                            <code className="text-emerald-300 text-[11px] select-all">mailto:vsolorzano.silocom@gmail.com</code>
                           </li>
                           <li>
-                            <code>VITE_OFFICE_LNG</code>: -66.831454
+                            <code>PUSH_API_SECRET</code>:{' '}
+                            <code className="text-emerald-300 text-[11px] select-all">silocom_push_sec_2026</code>
+                          </li>
+                          <li className="text-slate-400">
+                            <code>VITE_GOOGLE_SHEET_ID</code>: ID de la hoja de cálculo de Google.
                           </li>
                         </ul>
                       </li>

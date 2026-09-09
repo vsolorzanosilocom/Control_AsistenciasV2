@@ -1,4 +1,16 @@
+import { OfficeConfig } from '../types';
+
 /**
+ * Genera el código completo y actualizado de Google Apps Script (Codigo.gs) Versión 2.5
+ * para la integración satelital, geofencing, protección de fórmulas, Web Push y triggers automáticos.
+ */
+export function getGasScriptCode(config: OfficeConfig): string {
+  const lat = config?.latitud ?? 10.494505;
+  const lng = config?.longitud ?? -66.831454;
+  const radio = config?.radioMaxKm ?? 0.06;
+  const adminEmail = config?.adminEmail || 'vsolorzano.silocom@gmail.com';
+
+  return `/**
  * =========================================================================
  * SISTEMA DE CONTROL DE ASISTENCIAS - SILOCOM C.A.
  * RIF: J-30725192-1
@@ -22,25 +34,25 @@ const CONFIG = {
   HOJA_PUSH: 'DispositivosPush',
   URL_VERCEL_PUSH: 'https://silocom.vercel.app/api/send-push',
   PUSH_SECRET: 'silocom_push_sec_2026',
-  LATITUD_OFICINA: 10.494505,
-  LONGITUD_OFICINA: -66.831454,
-  RADIO_MAX_KM: 0.06,          // 0.06 km = 60 metros
-  TOLERANCIA_MIN: 30,          // 30 minutos de tolerancia
-  HORA_ENTRADA: 8,             // 08:00 (8:00 AM)
-  HORA_SALIDA: 17,             // 17:00 (5:00 PM)
-  RECORDATORIO_ENTRADA: '07:45', // 07:45 AM (Recordatorio de entrada)
-  AVISO_OLVIDO_ENTRADA: '08:30', // 08:30 AM (Aviso de olvido inteligente)
-  AVISO_PREVIO_SALIDA: '16:30',  // 16:30 PM (Aviso previo de salida)
-  VENTANA_ENTRADA_INI: 7,      // 07:00
-  VENTANA_ENTRADA_FIN: 9,      // 09:00
-  VENTANA_SALIDA_INI: 16,      // 16:00
-  VENTANA_SALIDA_FIN: 18,      // 18:00
-  CIERRE_AUTOMATICO: 17.5,     // 17:30 (5:30 PM - Cierre de turnos abiertos)
-  ADMIN_EMAIL: 'vsolorzano.silocom@gmail.com',
+  LATITUD_OFICINA: ${lat},
+  LONGITUD_OFICINA: ${lng},
+  RADIO_MAX_KM: ${radio},
+  TOLERANCIA_MIN: 30,
+  HORA_ENTRADA: 8,
+  HORA_SALIDA: 17,
+  RECORDATORIO_ENTRADA: '07:45',
+  AVISO_OLVIDO_ENTRADA: '08:30',
+  AVISO_PREVIO_SALIDA: '16:30',
+  VENTANA_ENTRADA_INI: 7,
+  VENTANA_ENTRADA_FIN: 9,
+  VENTANA_SALIDA_INI: 16,
+  VENTANA_SALIDA_FIN: 18,
+  CIERRE_AUTOMATICO: 17.5,
+  ADMIN_EMAIL: '${adminEmail}',
   FILA_INICIO_EMPLEADOS: 7,
-  COL_ID: 1,                   // Columna A: ID / USUARIO
-  COL_NOMBRE: 2,               // Columna B: NOMBRE Y APELLIDO
-  COL_DISPOSITIVO: 3           // Columna C: ID DE DISPOSITIVO
+  COL_ID: 1,
+  COL_NOMBRE: 2,
+  COL_DISPOSITIVO: 3
 };
 
 function doGet(e) {
@@ -129,11 +141,6 @@ function doPost(e) {
   }
 }
 
-/**
- * Registra un marcaje en la hoja "Asistencias"
- * PROTECCIÓN DE FÓRMULAS: Escribe estrictamente en Columnas 1 a 6 (A hasta F).
- * Las Columnas G (DIA) y H (MES) quedan intactas con sus fórmulas automáticas.
- */
 function procesarRegistroAsistencia(datos) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
@@ -146,7 +153,6 @@ function procesarRegistroAsistencia(datos) {
   const longitud = parseFloat(datos.lng);
   const idDispositivo = (datos.idDispositivo || '').toString().trim();
 
-  // Sincronizar dispositivo en hoja Configuracion si existe
   const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
   if (hojaConfig && idDispositivo) {
     sincronizarDispositivoEnConfig(hojaConfig, idUsuario, nombreEmpleado, idDispositivo);
@@ -159,7 +165,6 @@ function procesarRegistroAsistencia(datos) {
     ? latitud.toFixed(6) + ', ' + longitud.toFixed(6)
     : 'Sede Silocom';
 
-  // Si el cliente envía estado detallado (ej. "DENTRO DE RANGO (31m)") se preserva; caso contrario "DENTRO DE RANGO"
   const estadoStr = (datos.estado || 'DENTRO DE RANGO').toString().trim();
 
   // PROTECCIÓN DE FÓRMULAS: Inserción exclusiva en Columnas 1 a 6 (A a F)
@@ -254,11 +259,6 @@ function sincronizarDispositivoEnConfig(hojaConfig, idUsuario, nombreEmpleado, i
   } catch (e) {}
 }
 
-/**
- * Cierre automático de turnos abiertos a las 17:30
- * Asigna salida oficial a las 17:00:00 con ubicación "CIERRE AUTOMATICO / SISTEMA" y estado "CIERRE X SISTEMA"
- * PROTECCIÓN DE FÓRMULAS: Inserción en Columnas 1 a 6 (A a F), preservando G y H
- */
 function ejecutarCierreAutomatico() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
@@ -292,7 +292,7 @@ function ejecutarCierreAutomatico() {
   for (const empId in empleadosConEntrada) {
     if (!empleadosConSalida[empId]) {
       const proxFila = hojaAsistencias.getLastRow() + 1;
-      // PROTECCIÓN DE FÓRMULAS: Columnas 1 a 6 (A a F)
+      // PROTECCIÓN DE FÓRMULAS: Inserción en Columnas 1 a 6 (A a F)
       hojaAsistencias.getRange(proxFila, 1, 1, 6).setValues([[
         empId,
         empleadosConEntrada[empId],
@@ -308,7 +308,7 @@ function ejecutarCierreAutomatico() {
   return {
     success: true,
     message: cerrados.length > 0
-      ? 'Se cerraron ' + cerrados.length + ' jornada(s) pendientes.'
+      ? 'Se cerraron automáticamente ' + cerrados.length + ' jornada(s) pendientes.'
       : 'No hay turnos abiertos pendientes.',
     totalCerrados: cerrados.length,
     cerrados: cerrados,
@@ -318,9 +318,6 @@ function ejecutarCierreAutomatico() {
 
 // ================= GESTIÓN DE NOTIFICACIONES PUSH REMOTAS =================
 
-/**
- * Registra o actualiza la suscripción Web Push de un dispositivo en la hoja "DispositivosPush"
- */
 function guardarSuscripcionPush(datos) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -368,9 +365,6 @@ function guardarSuscripcionPush(datos) {
   }
 }
 
-/**
- * Obtiene la lista de suscripciones activas registradas en la hoja DispositivosPush
- */
 function obtenerSuscripcionesPushActivas(filtroUserId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hojaPush = ss.getSheetByName(CONFIG.HOJA_PUSH);
@@ -405,9 +399,6 @@ function obtenerSuscripcionesPushActivas(filtroUserId) {
   return subs;
 }
 
-/**
- * Despacha una notificación Push remota hacia la API de Vercel (/api/send-push)
- */
 function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
   try {
     const subs = obtenerSuscripcionesPushActivas(filtroUserId);
@@ -458,9 +449,6 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
   }
 }
 
-/**
- * Marca como INACTIVO cualquier endpoint caducado reportado por Vercel
- */
 function desactivarEndpointsCaducados(endpointsCaducados) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -479,9 +467,6 @@ function desactivarEndpointsCaducados(endpointsCaducados) {
 
 // ================= DISPARADORES PROGRAMADOS (TIME-DRIVEN TRIGGERS) =================
 
-/**
- * 07:45 AM - Recordatorio diario de Entrada (Lunes a Viernes)
- */
 function disparadorManana0745() {
   const hoy = new Date();
   const diaSemana = hoy.getDay();
@@ -494,9 +479,6 @@ function disparadorManana0745() {
   );
 }
 
-/**
- * 08:30 AM - Aviso por Olvido (Valida con precisión si el colaborador YA marcó hoy)
- */
 function disparadorOlvido0830() {
   const hoy = new Date();
   const diaSemana = hoy.getDay();
@@ -514,7 +496,6 @@ function disparadorOlvido0830() {
     const id = (datos[i][0] || '').toString().trim().toLowerCase();
     const tipo = (datos[i][2] || '').toString().trim().toUpperCase();
 
-    // Soporta tanto objetos Date como strings de fecha
     let fechaHora = (datos[i][3] instanceof Date)
       ? Utilities.formatDate(datos[i][3], tz, 'dd/MM/yyyy HH:mm:ss')
       : (datos[i][3] || '').toString().trim();
@@ -545,9 +526,6 @@ function disparadorOlvido0830() {
   }
 }
 
-/**
- * 16:30 PM - Recordatorio de Salida (Lunes a Viernes)
- */
 function disparadorSalida1630() {
   const hoy = new Date();
   const diaSemana = hoy.getDay();
@@ -560,14 +538,9 @@ function disparadorSalida1630() {
   );
 }
 
-/**
- * Instala todos los activadores horarios en Google Apps Script en un solo clic:
- * 07:45 AM, 08:30 AM, 16:30 PM y 17:30 PM (Cierre Automático)
- */
 function instalarTriggersHorarios() {
   eliminarTriggersHorarios();
 
-  // 07:45 AM (Recordatorio de Entrada)
   ScriptApp.newTrigger('disparadorManana0745')
     .timeBased()
     .atHour(7)
@@ -576,7 +549,6 @@ function instalarTriggersHorarios() {
     .inTimezone('America/Caracas')
     .create();
 
-  // 08:30 AM (Alerta de olvido inteligente)
   ScriptApp.newTrigger('disparadorOlvido0830')
     .timeBased()
     .atHour(8)
@@ -585,7 +557,6 @@ function instalarTriggersHorarios() {
     .inTimezone('America/Caracas')
     .create();
 
-  // 16:30 PM (Aviso previo de Salida)
   ScriptApp.newTrigger('disparadorSalida1630')
     .timeBased()
     .atHour(16)
@@ -594,7 +565,6 @@ function instalarTriggersHorarios() {
     .inTimezone('America/Caracas')
     .create();
 
-  // 17:30 PM (Cierre automático de jornadas abiertas)
   ScriptApp.newTrigger('ejecutarCierreAutomatico')
     .timeBased()
     .atHour(17)
@@ -609,9 +579,6 @@ function instalarTriggersHorarios() {
   };
 }
 
-/**
- * Elimina los triggers horarios anteriores para evitar duplicados
- */
 function eliminarTriggersHorarios() {
   const triggers = ScriptApp.getProjectTriggers();
   let count = 0;
@@ -631,9 +598,6 @@ function eliminarTriggersHorarios() {
   return { success: true, message: 'Se eliminaron ' + count + ' triggers antiguos.' };
 }
 
-/**
- * Alias de compatibilidad: ejecuta la instalación completa de triggers
- */
 function instalarTriggerCierreAutomatico() {
   return instalarTriggersHorarios();
 }
@@ -642,10 +606,6 @@ function desinstalarTriggerCierreAutomatico() {
   return eliminarTriggersHorarios();
 }
 
-/**
- * Lee la base de datos de asistencias y colaboradores
- * LECTURA CONDICIONAL DE FÓRMULAS: Lee los valores calculados de las columnas G (DIA) y H (MES)
- */
 function obtenerDatosCompletos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hojaAsistencias = ss.getSheetByName(CONFIG.HOJA_ASISTENCIAS);
@@ -671,7 +631,6 @@ function obtenerDatosCompletos() {
       const ubicacion = (row[4] || '').toString().trim();
       const estado = (row[5] || 'DENTRO DE RANGO').toString().trim();
 
-      // Lectura de resultados calculados de columnas formuladas G (DIA) y H (MES)
       const partesFecha = fechaHora.split(' ')[0] ? fechaHora.split(' ')[0].split('/') : [];
       const numMes = parseInt(partesFecha[1] || '0', 10);
       const meses = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
@@ -791,4 +750,6 @@ function obtenerConfiguracionDinamica() {
 function respuestaJSON(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+`;
 }
