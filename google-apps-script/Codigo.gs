@@ -3,16 +3,26 @@
  * SISTEMA DE CONTROL DE ASISTENCIAS - SILOCOM C.A.
  * RIF: J-30725192-1
  * Archivo: Codigo.gs (Google Apps Script)
- * Versión: 2.5 (Con Notificaciones Push Remotas y Cierre Automático)
+ * Versión: 2.6 (Inteligencia Centralizada en Railway & Horarios Dinámicos)
  * =========================================================================
- * Instrucciones:
+ * 🚀 NOVEDAD ARQUITECTÓNICA (Sin Triggers en Google Apps Script):
+ * A partir de esta versión, YA NO ES NECESARIO instalar activadores/triggers
+ * en el reloj de Google Apps Script.
+ * 
+ * El servidor persistente de Silocom en Railway (Node.js 24/7):
+ * 1. Lee automáticamente tus horarios desde la hoja 'Configuracion' (7:45, 8:30, 16:30, 17:30).
+ * 2. Si cambias los horarios en Sheets, Railway los detecta dinámicamente sin reinstalar código.
+ * 3. Despacha todos los recordatorios Push a los celulares sin depender de la cuota de Google.
+ * 4. Invoca el cierre automático diario de turnos a la hora fijada.
+ * 
+ * Pasos de Implementación:
  * 1. Abre tu Google Sheets "Control de Asistencias - Silocom".
  * 2. Ve a Extensiones > Apps Script.
  * 3. Selecciona todo (Ctrl + A), bórralo y pega este código completo.
  * 4. Guarda con el botón del Disquete (Ctrl + S).
- * 5. En el menú desplegable superior, selecciona la función "instalarTriggersHorarios"
- *    y haz clic en ▶ Ejecutar (Instalará las alertas de 07:45, 08:30, 16:30 y el cierre de 17:30).
- * 6. Haz clic en "Implementar > Gestionar implementaciones > Editar (lápiz) > Nueva versión > Implementar".
+ * 5. Haz clic en "Implementar > Gestionar implementaciones > Editar (lápiz) > Nueva versión > Implementar".
+ * 6. (Opcional) Si tenías activadores viejos en Google, ejecuta la función
+ *    "eliminarTriggersHorarios" para limpiarlos.
  * =========================================================================
  */
 
@@ -81,7 +91,7 @@ function doGet(e) {
 
     return respuestaJSON({
       status: 'ok',
-      message: 'API Silocom Asistencias en línea (Versión 2.5).'
+      message: 'API Silocom Asistencias en línea (Versión 2.6 - Centralizada en Railway).'
     });
   } catch (err) {
     return respuestaJSON({
@@ -760,6 +770,29 @@ function obtenerListaEmpleados() {
   return empleados;
 }
 
+function formatearHoraCadena(val, fallback) {
+  if (val === null || val === undefined || val === '') return fallback;
+  if (val instanceof Date) {
+    var h = val.getHours();
+    var m = val.getMinutes();
+    return (h < 10 ? '0' + h : '' + h) + ':' + (m < 10 ? '0' + m : '' + m);
+  }
+  var str = val.toString().trim();
+  var match = str.match(/^(\d{1,2}):(\d{2})/);
+  if (match) {
+    var h = parseInt(match[1], 10);
+    var m = match[2];
+    return (h < 10 ? '0' + h : '' + h) + ':' + m;
+  }
+  var num = parseFloat(str);
+  if (!isNaN(num) && num >= 0 && num < 24) {
+    var h = Math.floor(num);
+    var m = Math.round((num - h) * 60);
+    return (h < 10 ? '0' + h : '' + h) + ':' + (m < 10 ? '0' + m : '' + m);
+  }
+  return fallback;
+}
+
 function obtenerConfiguracionDinamica() {
   const configDinamica = {
     latitud: CONFIG.LATITUD_OFICINA,
@@ -775,7 +808,7 @@ function obtenerConfiguracionDinamica() {
     ventanaEntradaFin: CONFIG.VENTANA_ENTRADA_FIN,
     ventanaSalidaInicio: CONFIG.VENTANA_SALIDA_INI,
     ventanaSalidaFin: CONFIG.VENTANA_SALIDA_FIN,
-    cierreAutomatico: CONFIG.CIERRE_AUTOMATICO,
+    cierreAutomatico: '17:30',
     adminEmail: CONFIG.ADMIN_EMAIL,
     urlPushServer: CONFIG.URL_PUSH_SERVER
   };
@@ -785,26 +818,55 @@ function obtenerConfiguracionDinamica() {
     const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
     if (!hojaConfig) return configDinamica;
 
-    const datos = hojaConfig.getRange(1, 1, 6, 4).getValues();
+    const maxFilas = Math.min(10, hojaConfig.getLastRow() || 6);
+    const maxCols = Math.min(8, hojaConfig.getLastColumn() || 4);
+    const datos = hojaConfig.getRange(1, 1, maxFilas, maxCols).getValues();
+
     for (let r = 0; r < datos.length; r++) {
-      for (let c = 0; c < datos[r].length; c += 2) {
+      for (let c = 0; c < datos[r].length; c++) {
         const val = (datos[r][c] || '').toString().toLowerCase().trim();
-        if (val.includes('latitud') && datos[r][c + 1]) {
-          const parsed = parseFloat(datos[r][c + 1]);
+        const siguienteValor = (c + 1 < datos[r].length) ? datos[r][c + 1] : '';
+
+        // Coordenadas y Radio
+        if (val.includes('latitud') && siguienteValor !== '') {
+          const parsed = parseFloat(siguienteValor);
           if (!isNaN(parsed)) configDinamica.latitud = parsed;
         }
-        if (val.includes('longitud') && datos[r][c + 1]) {
-          const parsed = parseFloat(datos[r][c + 1]);
+        if (val.includes('longitud') && siguienteValor !== '') {
+          const parsed = parseFloat(siguienteValor);
           if (!isNaN(parsed)) configDinamica.longitud = parsed;
         }
-        if (val.includes('radio') && datos[r][c + 1]) {
-          const parsed = parseFloat(datos[r][c + 1]);
+        if (val.includes('radio') && siguienteValor !== '') {
+          const parsed = parseFloat(siguienteValor);
           if (!isNaN(parsed)) {
             configDinamica.radioMaxKm = parsed > 1 ? parsed / 1000 : parsed;
           }
         }
-        if ((val.includes('railway') || val.includes('push') || val.includes('servidor') || val.includes('vercel')) && datos[r][c + 1]) {
-          configDinamica.urlPushServer = datos[r][c + 1].toString().trim();
+        // Servidor Railway
+        if ((val.includes('railway') || val.includes('push') || val.includes('servidor') || val.includes('vercel')) && siguienteValor !== '') {
+          configDinamica.urlPushServer = siguienteValor.toString().trim();
+        }
+
+        // Horarios Dinámicos de Notificaciones y Cierre
+        if ((val.includes('recordatorio entrada') || val.includes('alerta entrada') || val.includes('recordatorio_entrada') || val.includes('hora recordatorio entrada')) && siguienteValor !== '') {
+          configDinamica.recordatorioEntrada = formatearHoraCadena(siguienteValor, configDinamica.recordatorioEntrada);
+        }
+        if ((val.includes('aviso olvido') || val.includes('olvido entrada') || val.includes('alerta olvido') || val.includes('aviso_olvido')) && siguienteValor !== '') {
+          configDinamica.avisoOlvidoEntrada = formatearHoraCadena(siguienteValor, configDinamica.avisoOlvidoEntrada);
+        }
+        if ((val.includes('recordatorio salida') || val.includes('aviso previo salida') || val.includes('alerta salida') || val.includes('aviso salida')) && siguienteValor !== '') {
+          configDinamica.avisoPrevioSalida = formatearHoraCadena(siguienteValor, configDinamica.avisoPrevioSalida);
+        }
+        if ((val.includes('cierre') || val.includes('cierre automatico') || val.includes('cierre_automatico') || val.includes('cierre turnos')) && siguienteValor !== '') {
+          configDinamica.cierreAutomatico = formatearHoraCadena(siguienteValor, configDinamica.cierreAutomatico);
+        }
+        if (val === 'hora entrada' && siguienteValor !== '') {
+          const parsedH = parseFloat(siguienteValor);
+          if (!isNaN(parsedH)) configDinamica.horaEntrada = parsedH;
+        }
+        if (val === 'hora salida' && siguienteValor !== '') {
+          const parsedH = parseFloat(siguienteValor);
+          if (!isNaN(parsedH)) configDinamica.horaSalida = parsedH;
         }
       }
     }

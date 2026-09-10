@@ -538,117 +538,240 @@ app.post('/api/test-webhook', async (req, res) => {
   }
 });
 
+// 11. GET /api/schedule-status
+app.get('/api/schedule-status', (req, res) => {
+  const caracasInfo = getCaracasDateInfo();
+  res.json({
+    success: true,
+    dynamicConfig: dynamicScheduleConfig,
+    caracasTime: `${String(caracasInfo.hour).padStart(2, '0')}:${String(caracasInfo.minute).padStart(2, '0')}:${String(caracasInfo.second).padStart(2, '0')}`,
+    caracasDate: caracasInfo.dateSheetsFormat,
+    dayOfWeek: caracasInfo.dayOfWeek,
+    engine: 'Railway Autonomous Dynamic Scheduler (evaluación continua cada 30s)',
+  });
+});
+
+// 12. POST /api/sync-schedule (Forzar sincronización inmediata desde Sheets)
+app.post('/api/sync-schedule', async (req, res) => {
+  try {
+    const updated = await syncConfigFromSheets(true);
+    res.json({
+      success: true,
+      message: 'Horarios dinámicos sincronizados con éxito desde Google Sheets.',
+      config: dynamicScheduleConfig,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /* =========================================================================
-   CRON JOBS (node-cron en Railway con persistencia)
+   SISTEMA DE HORARIOS DINÁMICOS & SCHEDULER PERSISTENTE EN RAILWAY
    ========================================================================= */
 
-// Cron 1: 07:45 AM (Lunes a Viernes) - Recordatorio de Entrada
-cron.schedule(
-  '45 7 * * 1-5',
-  async () => {
-    console.log('[CRON 07:45] Ejecutando recordatorio matutino de Entrada...');
-    const subs = activeSubscriptions.map((s) => s.subscription);
-    if (subs.length > 0) {
+interface DynamicScheduleConfig {
+  recordatorioEntrada: string; // ej: "07:45"
+  avisoOlvidoEntrada: string;  // ej: "08:30"
+  avisoPrevioSalida: string;   // ej: "16:30"
+  cierreAutomatico: string;    // ej: "17:30"
+  latitud?: number;
+  longitud?: number;
+  radioMaxKm?: number;
+  lastSynced: number;
+}
+
+let dynamicScheduleConfig: DynamicScheduleConfig = {
+  recordatorioEntrada: '07:45',
+  avisoOlvidoEntrada: '08:30',
+  avisoPrevioSalida: '16:30',
+  cierreAutomatico: '17:30',
+  lastSynced: 0,
+};
+
+function normalizeTimeString(val: any, fallback: string): string {
+  if (val === null || val === undefined || val === '') return fallback;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    const match = trimmed.match(/^(\d{1,2}):(\d{2})/);
+    if (match) {
+      const h = match[1].padStart(2, '0');
+      const m = match[2];
+      return `${h}:${m}`;
+    }
+    const num = parseFloat(trimmed);
+    if (!isNaN(num) && num >= 0 && num < 24) {
+      const h = Math.floor(num);
+      const m = Math.round((num - h) * 60);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+  }
+  if (typeof val === 'number' && val >= 0 && val < 24) {
+    const h = Math.floor(val);
+    const m = Math.round((val - h) * 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+  return fallback;
+}
+
+async function syncConfigFromSheets(force = false): Promise<boolean> {
+  const now = Date.now();
+  if (!force && now - dynamicScheduleConfig.lastSynced < 5 * 60 * 1000) {
+    return false;
+  }
+
+  const gasUrl = getGoogleAppsScriptUrl();
+  if (!gasUrl) return false;
+
+  try {
+    const response = await fetch(`${gasUrl}?action=obtenerConfiguracion`);
+    if (!response.ok) return false;
+    const json: any = await response.json();
+    if (json && json.success && json.config) {
+      const cfg = json.config;
+      const newRecordatorioEntrada = normalizeTimeString(cfg.recordatorioEntrada, dynamicScheduleConfig.recordatorioEntrada);
+      const newAvisoOlvidoEntrada = normalizeTimeString(cfg.avisoOlvidoEntrada, dynamicScheduleConfig.avisoOlvidoEntrada);
+      const newAvisoPrevioSalida = normalizeTimeString(cfg.avisoPrevioSalida, dynamicScheduleConfig.avisoPrevioSalida);
+      const newCierreAutomatico = normalizeTimeString(cfg.cierreAutomatico, dynamicScheduleConfig.cierreAutomatico);
+
+      if (
+        newRecordatorioEntrada !== dynamicScheduleConfig.recordatorioEntrada ||
+        newAvisoOlvidoEntrada !== dynamicScheduleConfig.avisoOlvidoEntrada ||
+        newAvisoPrevioSalida !== dynamicScheduleConfig.avisoPrevioSalida ||
+        newCierreAutomatico !== dynamicScheduleConfig.cierreAutomatico
+      ) {
+        console.log(`[HORARIOS DINÁMICOS ACTUALIZADOS DESDE SHEETS]`);
+        console.log(`  - Recordatorio Entrada: ${newRecordatorioEntrada}`);
+        console.log(`  - Aviso Olvido Entrada: ${newAvisoOlvidoEntrada}`);
+        console.log(`  - Recordatorio Salida:  ${newAvisoPrevioSalida}`);
+        console.log(`  - Cierre Automático:    ${newCierreAutomatico}`);
+      }
+
+      dynamicScheduleConfig = {
+        recordatorioEntrada: newRecordatorioEntrada,
+        avisoOlvidoEntrada: newAvisoOlvidoEntrada,
+        avisoPrevioSalida: newAvisoPrevioSalida,
+        cierreAutomatico: newCierreAutomatico,
+        latitud: cfg.latitud ?? dynamicScheduleConfig.latitud,
+        longitud: cfg.longitud ?? dynamicScheduleConfig.longitud,
+        radioMaxKm: cfg.radioMaxKm ?? dynamicScheduleConfig.radioMaxKm,
+        lastSynced: now,
+      };
+      return true;
+    }
+  } catch (err: any) {
+    console.warn('[HORARIOS DINÁMICOS] Aviso leyendo configuración desde Sheets:', err?.message);
+  }
+  return false;
+}
+
+// Validación inteligente de colaboradores sin registro de entrada
+async function ejecutarAvisoOlvidoInteligente(timeHM: string) {
+  const gasUrl = getGoogleAppsScriptUrl();
+  if (!gasUrl) {
+    console.warn(`[AVISO OLVIDO ${timeHM}] No hay GOOGLE_APPS_SCRIPT_URL configurada.`);
+    return;
+  }
+
+  try {
+    const response = await fetch(`${gasUrl}?action=obtenerDatos`);
+    const gasData: any = await response.json();
+    if (!gasData || !Array.isArray(gasData.registros)) return;
+
+    const caracasInfo = getCaracasDateInfo();
+    const hoyStr = caracasInfo.dateSheetsFormat; // ej. "10/09/2026"
+
+    const marcadosHoy: Record<string, boolean> = {};
+    for (const reg of gasData.registros) {
+      const fStr = (reg.fechaHora || '').toString().trim();
+      const tipo = (reg.tipo || '').toString().trim().toUpperCase();
+      const id = (reg.id || '').toString().trim().toLowerCase();
+      if (fStr.startsWith(hoyStr) && tipo === 'ENTRADA') {
+        marcadosHoy[id] = true;
+      }
+    }
+
+    const subsToSend: webpush.PushSubscription[] = [];
+    for (const subRecord of activeSubscriptions) {
+      const empId = (subRecord.userId || '').toLowerCase();
+      if (!marcadosHoy[empId]) {
+        subsToSend.push(subRecord.subscription);
+      }
+    }
+
+    if (subsToSend.length > 0) {
+      console.log(`[AVISO OLVIDO ${timeHM}] Enviando aviso de olvido a ${subsToSend.length} dispositivo(s)...`);
       await sendWebPushToSubscriptions(
-        subs,
-        'Silocom C.A. - Recordatorio de Entrada (07:45 AM)',
-        'Buenos días, recuerda registrar tu ENTRADA al ingresar a la sede Silocom.',
-        'silocom-0745-entrada'
+        subsToSend,
+        `Silocom C.A. - Aviso de Asistencia (${timeHM})`,
+        'Atención: Aún no has registrado tu ENTRADA el día de hoy. Recuerda marcar tu asistencia al estar en sede.',
+        'silocom-olvido'
       );
+    } else {
+      console.log(`[AVISO OLVIDO ${timeHM}] Todos los colaboradores registrados han marcado su entrada hoy.`);
     }
-  },
-  { timezone: 'America/Caracas' }
-);
+  } catch (e) {
+    console.error(`[AVISO OLVIDO ${timeHM}] Error en validación de olvido:`, e);
+  }
+}
 
-// Cron 2: 08:30 AM (Lunes a Viernes) - Aviso Inteligente por Olvido
-cron.schedule(
-  '30 8 * * 1-5',
-  async () => {
-    console.log('[CRON 08:30] Verificando colaboradores sin registro de entrada...');
-    const gasUrl = getGoogleAppsScriptUrl();
-    if (!gasUrl) {
-      console.warn('[CRON 08:30] No hay GOOGLE_APPS_SCRIPT_URL configurada.');
-      return;
-    }
-
-    try {
-      // 1. Consultar asistencias del día a Google Sheets
-      const response = await fetch(`${gasUrl}?action=obtenerDatos`);
-      const gasData: any = await response.json();
-      if (!gasData || !Array.isArray(gasData.registros)) return;
-
-      const caracasInfo = getCaracasDateInfo();
-      const hoyStr = caracasInfo.dateSheetsFormat; // ej. "10/09/2026"
-
-      // 2. Identificar qué colaboradores registraron ENTRADA hoy
-      const marcadosHoy: Record<string, boolean> = {};
-      for (const reg of gasData.registros) {
-        const fStr = (reg.fechaHora || '').toString().trim();
-        const tipo = (reg.tipo || '').toString().trim().toUpperCase();
-        const id = (reg.id || '').toString().trim().toLowerCase();
-        if (fStr.startsWith(hoyStr) && tipo === 'ENTRADA') {
-          marcadosHoy[id] = true;
-        }
-      }
-
-      // 3. Filtrar suscripciones de colaboradores que NO hayan marcado
-      const subsToSend: webpush.PushSubscription[] = [];
-      for (const subRecord of activeSubscriptions) {
-        const empId = (subRecord.userId || '').toLowerCase();
-        if (!marcadosHoy[empId]) {
-          subsToSend.push(subRecord.subscription);
-        }
-      }
-
-      if (subsToSend.length > 0) {
-        console.log(`[CRON 08:30] Enviando aviso de olvido a ${subsToSend.length} dispositivo(s)...`);
-        await sendWebPushToSubscriptions(
-          subsToSend,
-          'Silocom C.A. - Aviso de Asistencia (08:30 AM)',
-          'Atención: Aún no has registrado tu ENTRADA el día de hoy. Recuerda marcar tu asistencia al estar en sede.',
-          'silocom-0830-olvido'
-        );
-      } else {
-        console.log('[CRON 08:30] Todos los colaboradores registrados han marcado su entrada hoy.');
-      }
-    } catch (e) {
-      console.error('[CRON 08:30] Error en validación de olvido:', e);
-    }
-  },
-  { timezone: 'America/Caracas' }
-);
-
-// Cron 3: 16:45 PM (Lunes a Viernes) - Recordatorio de Salida (cron 45 16 * * 1-5)
-cron.schedule(
-  '45 16 * * 1-5',
-  async () => {
-    console.log('[CRON 16:45] Ejecutando recordatorio de fin de jornada...');
-    const subs = activeSubscriptions.map((s) => s.subscription);
-    if (subs.length > 0) {
-      await sendWebPushToSubscriptions(
-        subs,
-        'Silocom C.A. - Fin de Jornada Laboral',
-        'Buenas tardes, recuerda registrar tu SALIDA al culminar tu jornada laboral en la sede Silocom.',
-        'silocom-1630-salida'
-      );
-    }
-  },
-  { timezone: 'America/Caracas' }
-);
-
-// Cron 4 / Poller: Cierre Automático a las 17:30 (Hora Caracas)
-let lastAutoCloseDate = '';
+// Bucle Continuo de Monitoreo en Railway (Cada 30 Segundos en Hora Caracas)
+let lastDispatchedDate_Entrada = '';
+let lastDispatchedDate_Olvido = '';
+let lastDispatchedDate_Salida = '';
+let lastDispatchedDate_Cierre = '';
 
 setInterval(async () => {
   try {
     const info = getCaracasDateInfo();
+    const timeHM = `${String(info.hour).padStart(2, '0')}:${String(info.minute).padStart(2, '0')}`;
+    const isoDate = info.isoDate;
+
+    // Sincronización periódica automática de horarios desde Google Sheets cada 5 minutos
+    await syncConfigFromSheets(false);
+
     // Solo de lunes a viernes (1 a 5)
     if (info.dayOfWeek >= 1 && info.dayOfWeek <= 5) {
-      // Si son >= 17:30 y no se ha ejecutado hoy
-      if ((info.hour > 17 || (info.hour === 17 && info.minute >= 30)) && lastAutoCloseDate !== info.isoDate) {
-        lastAutoCloseDate = info.isoDate;
-        console.log(`[CIERRE AUTOMATICO 17:30] Ejecutando cierre de turnos para fecha ${info.isoDate}...`);
+      // 1. RECORDATORIO DE ENTRADA DINÁMICO
+      if (timeHM === dynamicScheduleConfig.recordatorioEntrada && lastDispatchedDate_Entrada !== isoDate) {
+        lastDispatchedDate_Entrada = isoDate;
+        console.log(`[ALERTA AUTOMATICA ${timeHM}] Despachando Recordatorio Matutino de Entrada...`);
+        const subs = activeSubscriptions.map((s) => s.subscription);
+        if (subs.length > 0) {
+          await sendWebPushToSubscriptions(
+            subs,
+            `Silocom C.A. - Recordatorio de Entrada (${timeHM})`,
+            'Buenos días, recuerda registrar tu ENTRADA al ingresar a la sede Silocom.',
+            'silocom-entrada'
+          );
+        }
+      }
 
+      // 2. AVISO DE OLVIDO INTELIGENTE DINÁMICO
+      if (timeHM === dynamicScheduleConfig.avisoOlvidoEntrada && lastDispatchedDate_Olvido !== isoDate) {
+        lastDispatchedDate_Olvido = isoDate;
+        console.log(`[ALERTA AUTOMATICA ${timeHM}] Verificando colaboradores sin registro de entrada...`);
+        await ejecutarAvisoOlvidoInteligente(timeHM);
+      }
+
+      // 3. RECORDATORIO DE SALIDA DINÁMICO
+      if (timeHM === dynamicScheduleConfig.avisoPrevioSalida && lastDispatchedDate_Salida !== isoDate) {
+        lastDispatchedDate_Salida = isoDate;
+        console.log(`[ALERTA AUTOMATICA ${timeHM}] Despachando Recordatorio de Fin de Jornada...`);
+        const subs = activeSubscriptions.map((s) => s.subscription);
+        if (subs.length > 0) {
+          await sendWebPushToSubscriptions(
+            subs,
+            `Silocom C.A. - Fin de Jornada Laboral (${timeHM})`,
+            'Buenas tardes, recuerda registrar tu SALIDA al culminar tu jornada laboral en la sede Silocom.',
+            'silocom-salida'
+          );
+        }
+      }
+
+      // 4. CIERRE AUTOMÁTICO DE TURNOS DINÁMICO
+      if (timeHM >= dynamicScheduleConfig.cierreAutomatico && lastDispatchedDate_Cierre !== isoDate) {
+        lastDispatchedDate_Cierre = isoDate;
+        console.log(`[CIERRE AUTOMATICO ${timeHM}] Ejecutando cierre de turnos en Google Sheets para fecha ${isoDate}...`);
         const gasUrl = getGoogleAppsScriptUrl();
         if (gasUrl) {
           const resp = await fetch(gasUrl, {
@@ -657,14 +780,14 @@ setInterval(async () => {
             body: JSON.stringify({ action: 'ejecutarCierreAutomatico' }),
           });
           const resJson = await resp.json();
-          console.log('[CIERRE AUTOMATICO 17:30] Respuesta de Google Apps Script:', resJson);
+          console.log(`[CIERRE AUTOMATICO ${timeHM}] Respuesta de Google Apps Script:`, resJson);
         }
       }
     }
   } catch (err) {
-    console.error('[CIERRE AUTOMATICO 17:30] Error verificando cierre automático:', err);
+    console.error('[SCHEDULER LOOP ERROR]:', err);
   }
-}, 60000);
+}, 30000);
 
 /* =========================================================================
    FRONTEND SERVING (Vite Middleware in Dev / dist in Prod)
@@ -690,6 +813,10 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor Silocom Express corriendo en http://0.0.0.0:${PORT}`);
     console.log(`🕒 Zona horaria activa para cron jobs: America/Caracas`);
+    // Sincronizar horarios dinámicos al iniciar
+    syncConfigFromSheets(true).catch((err) => {
+      console.warn('[HORARIOS DINÁMICOS] Aviso en sincronización inicial:', err?.message);
+    });
   });
 }
 

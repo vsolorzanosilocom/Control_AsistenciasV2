@@ -122,6 +122,92 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [isInstallingTriggers, setIsInstallingTriggers] = useState<boolean>(false);
   const [isSyncingPushSub, setIsSyncingPushSub] = useState<boolean>(false);
 
+  // Dynamic schedules from Google Sheets & Railway status
+  const [dynamicSchedules, setDynamicSchedules] = useState<{
+    recordatorioEntrada: string;
+    avisoOlvidoEntrada: string;
+    avisoPrevioSalida: string;
+    cierreAutomatico: string;
+  }>({
+    recordatorioEntrada: '07:45',
+    avisoOlvidoEntrada: '08:30',
+    avisoPrevioSalida: '16:30',
+    cierreAutomatico: '17:30',
+  });
+  const [isSyncingSchedule, setIsSyncingSchedule] = useState<boolean>(false);
+  const [syncScheduleMsg, setSyncScheduleMsg] = useState<string>('');
+
+  // Fetch dynamic schedules
+  const handleFetchDynamicSchedule = async () => {
+    setIsSyncingSchedule(true);
+    setSyncScheduleMsg('Consultando horarios dinámicos configurados en Google Sheets...');
+    try {
+      // 1. Intentar consultar endpoint local de Railway
+      let fetchedConfig: any = null;
+      try {
+        const resp = await fetch('/api/sync-schedule', { method: 'POST' });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && data.config) {
+            fetchedConfig = data.config;
+          }
+        }
+      } catch (e) {}
+
+      // 2. Si no respondió /api/sync-schedule, consultar directamente a GAS
+      if (!fetchedConfig && configForm.googleAppsScriptUrl) {
+        const gasResp = await fetch(`${configForm.googleAppsScriptUrl}?action=obtenerConfiguracion`);
+        if (gasResp.ok) {
+          const gasData = await gasResp.json();
+          if (gasData && gasData.config) {
+            fetchedConfig = gasData.config;
+          }
+        }
+      }
+
+      if (fetchedConfig) {
+        setDynamicSchedules({
+          recordatorioEntrada: fetchedConfig.recordatorioEntrada || '07:45',
+          avisoOlvidoEntrada: fetchedConfig.avisoOlvidoEntrada || '08:30',
+          avisoPrevioSalida: fetchedConfig.avisoPrevioSalida || '16:30',
+          cierreAutomatico: fetchedConfig.cierreAutomatico || '17:30',
+        });
+        setSyncScheduleMsg(
+          `✓ Horarios leídos en tiempo real desde Google Sheets: Entrada ${fetchedConfig.recordatorioEntrada || '07:45'} | Olvido ${fetchedConfig.avisoOlvidoEntrada || '08:30'} | Salida ${fetchedConfig.avisoPrevioSalida || '16:30'} | Cierre ${fetchedConfig.cierreAutomatico || '17:30'}`
+        );
+      } else {
+        setSyncScheduleMsg('No se obtuvo respuesta de horarios; usando valores predeterminados de Silocom.');
+      }
+    } catch (err: any) {
+      setSyncScheduleMsg(`Aviso al consultar horarios: ${err?.message || 'Error de conexión'}`);
+    } finally {
+      setIsSyncingSchedule(false);
+    }
+  };
+
+  const handleCleanAppsScriptTriggers = async () => {
+    setIsInstallingTriggers(true);
+    setRemotePushStatus('Limpiando activadores en Google Apps Script...');
+    if (!configForm.googleAppsScriptUrl) {
+      setRemotePushStatus('Por favor especifica la URL de Google Apps Script primero.');
+      setIsInstallingTriggers(false);
+      return;
+    }
+    try {
+      const resp = await fetch(configForm.googleAppsScriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'eliminarTriggersHorarios' }),
+      });
+      const data = await resp.json();
+      setRemotePushStatus(data.message || '✓ Activadores viejos de Google eliminados con éxito. Railway asume el control total 24/7.');
+    } catch (e: any) {
+      setRemotePushStatus('✓ Petición de limpieza enviada a Google Apps Script.');
+    } finally {
+      setIsInstallingTriggers(false);
+    }
+  };
+
   useEffect(() => {
     const timer = setInterval(() => {
       setCaracasLiveTime(NotificationService.getCaracasTimeInfo().formattedTime);
@@ -397,7 +483,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-hidden">
-      <div className="relative w-full h-[100dvh] sm:h-auto sm:max-h-[90vh] max-w-5xl flex flex-col rounded-none sm:rounded-3xl bg-[#0f172a] border-0 sm:border border-[#334155] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden">
+      <div className="relative w-full h-[100dvh] sm:h-auto sm:max-h-[90vh] max-w-5xl flex flex-col min-h-0 rounded-none sm:rounded-3xl bg-[#0f172a] border-0 sm:border border-[#334155] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-3 sm:px-6 py-2.5 sm:py-3.5 border-b border-slate-800 bg-[#0b1326] shrink-0 gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -516,7 +602,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           </div>
         ) : (
           /* Admin Main Console */
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Nav Tabs */}
             <div className="flex items-center gap-1 px-2 sm:px-6 border-b border-slate-800 bg-[#0b1326] overflow-x-auto no-scrollbar shrink-0">
               <button
@@ -585,11 +671,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               >
                 <Code2 className="w-4 h-4" />
                 <span>Código GAS & Railway</span>
+                <span className="px-1.5 py-0.2 text-[9px] rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono">
+                  v2.6
+                </span>
               </button>
             </div>
 
             {/* Tab Body */}
-            <div className="flex-1 overflow-y-auto p-3 sm:p-6 overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 overscroll-contain touch-pan-y">
               {/* TAB 1: RESUMEN DE ASISTENCIAS */}
               {activeTab === 'resumen' && (
                 <div className="space-y-4">
@@ -790,7 +879,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
                   {/* Metrics Table */}
                   <div className="rounded-2xl border border-slate-800 overflow-hidden bg-[#0b1326]">
-                    <table className="w-full text-left text-xs font-mono">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs font-mono">
                       <thead className="bg-[#131c2e] text-slate-400 uppercase text-[10px] border-b border-slate-800">
                         <tr>
                           <th className="px-4 py-3">Empleado</th>
@@ -845,6 +935,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -927,64 +1018,123 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   )}
 
                   {/* Employees List */}
-                  <div className="rounded-2xl border border-slate-800 overflow-hidden bg-[#0b1326]">
-                    <table className="w-full text-left text-xs font-mono">
-                      <thead className="bg-[#131c2e] text-slate-400 uppercase text-[10px] border-b border-slate-800">
-                        <tr>
-                          <th className="px-4 py-3">Colaborador</th>
-                          <th className="px-4 py-3">ID / Correo</th>
-                          <th className="px-4 py-3">Cargo</th>
-                          <th className="px-4 py-3">Dispositivo Vinculado</th>
-                          <th className="px-4 py-3 text-right">Acción Admin</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                        {StorageService.getEmpleados().map((emp, i) => (
-                          <tr key={i} className="hover:bg-slate-800/30">
-                            <td className="px-4 py-3 font-semibold text-white">
-                              {emp.nombre}
+                  {/* Mobile View: Cards */}
+                  <div className="space-y-3 sm:hidden">
+                    {StorageService.getEmpleados().map((emp, i) => (
+                      <div
+                        key={i}
+                        className="p-3.5 rounded-2xl bg-[#0b1326] border border-slate-800/80 space-y-2.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-white text-sm flex items-center gap-1.5 flex-wrap">
+                              <span className="truncate">{emp.nombre}</span>
                               {emp.sinHorarioRegulado && (
-                                <span className="ml-2 text-[10px] font-normal text-amber-400 bg-amber-950 px-1.5 py-0.5 rounded">
+                                <span className="text-[10px] font-normal text-amber-400 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-900/50">
                                   Sin Horario
                                 </span>
                               )}
-                            </td>
-                            <td className="px-4 py-3 text-slate-400">
+                            </div>
+                            <div className="text-xs text-slate-400 font-mono mt-0.5 truncate">
                               {emp.id}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">
-                              {emp.cargo || 'Operaciones'}
-                            </td>
-                            <td className="px-4 py-3">
-                              {emp.idDispositivo ? (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-[11px]">
-                                  <Smartphone className="w-3 h-3" />
-                                  {emp.idDispositivo}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[11px]">
-                                  Pendiente (Se vinculará en 1er marcaje)
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              {emp.idDispositivo && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleResetDevice(emp.id, emp.nombre)
-                                  }
-                                  className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-[10px] font-mono transition-all inline-flex items-center gap-1"
-                                >
-                                  <RefreshCw className="w-3 h-3" />
-                                  <span>Desvincular Equipo</span>
-                                </button>
-                              )}
-                            </td>
+                            </div>
+                          </div>
+                          <span className="text-[11px] px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 font-mono shrink-0">
+                            {emp.cargo || 'Operaciones'}
+                          </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-800/60 flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] text-slate-400 font-mono">Dispositivo:</span>
+                            {emp.idDispositivo ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-[10px] truncate max-w-[180px]">
+                                <Smartphone className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{emp.idDispositivo}</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                Pendiente (1er marcaje)
+                              </span>
+                            )}
+                          </div>
+
+                          {emp.idDispositivo && (
+                            <button
+                              type="button"
+                              onClick={() => handleResetDevice(emp.id, emp.nombre)}
+                              className="w-full py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 active:bg-rose-500/30 border border-rose-500/30 text-rose-300 text-xs font-mono font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Desvincular Dispositivo</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop View: Table */}
+                  <div className="hidden sm:block rounded-2xl border border-slate-800 overflow-hidden bg-[#0b1326]">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs font-mono">
+                        <thead className="bg-[#131c2e] text-slate-400 uppercase text-[10px] border-b border-slate-800">
+                          <tr>
+                            <th className="px-4 py-3">Colaborador</th>
+                            <th className="px-4 py-3">ID / Correo</th>
+                            <th className="px-4 py-3">Cargo</th>
+                            <th className="px-4 py-3">Dispositivo Vinculado</th>
+                            <th className="px-4 py-3 text-right">Acción Admin</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {StorageService.getEmpleados().map((emp, i) => (
+                            <tr key={i} className="hover:bg-slate-800/30">
+                              <td className="px-4 py-3 font-semibold text-white">
+                                {emp.nombre}
+                                {emp.sinHorarioRegulado && (
+                                  <span className="ml-2 text-[10px] font-normal text-amber-400 bg-amber-950 px-1.5 py-0.5 rounded">
+                                    Sin Horario
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-slate-400">
+                                {emp.id}
+                              </td>
+                              <td className="px-4 py-3 text-slate-300">
+                                {emp.cargo || 'Operaciones'}
+                              </td>
+                              <td className="px-4 py-3">
+                                {emp.idDispositivo ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-[11px]">
+                                    <Smartphone className="w-3 h-3" />
+                                    {emp.idDispositivo}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[11px]">
+                                    Pendiente (Se vinculará en 1er marcaje)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {emp.idDispositivo && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleResetDevice(emp.id, emp.nombre)
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-[10px] font-mono transition-all inline-flex items-center gap-1"
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>Desvincular Equipo</span>
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1209,7 +1359,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Opción B: Notificaciones Remotas Serverless (Vercel + Google Apps Script) */}
+                      {/* Opción B: Notificaciones Remotas Serverless & Control 24/7 en Railway */}
                       <div className="p-4 rounded-xl bg-gradient-to-r from-sky-950/40 via-blue-950/30 to-indigo-950/40 border border-sky-500/40 space-y-3">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <div>
@@ -1218,10 +1368,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
                               </span>
-                              <span>🌐 Notificaciones Push Remotas (Servidor Express en Railway + Google Sheets)</span>
+                              <span>🌐 Inteligencia Centralizada en Railway (24/7 sin Triggers de Google)</span>
                             </div>
                             <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                              Llegan <strong>con la app cerrada y el teléfono bloqueado</strong>. El servidor persistente en Railway y Google Apps Script las despachan a nivel del sistema operativo.
+                              Railway lee dinámicamente los horarios desde tu Google Sheets (Hoja <code>Configuracion</code>) y despacha las notificaciones Push con la <strong>app cerrada y el teléfono bloqueado</strong>. Ya no necesitas activadores en Google Apps Script.
                             </p>
                           </div>
                         </div>
@@ -1239,6 +1389,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
                           <button
                             type="button"
+                            onClick={handleFetchDynamicSchedule}
+                            disabled={isSyncingSchedule}
+                            className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-mono font-bold shadow-lg shadow-indigo-600/25 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                            title="Consulta en tiempo real los horarios guardados en tu Google Sheets"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSchedule ? 'animate-spin' : ''}`} />
+                            <span>{isSyncingSchedule ? 'Consultando...' : '🔄 Sincronizar Horarios de Sheets'}</span>
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={handleSyncPushSubscription}
                             disabled={isSyncingPushSub}
                             className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-sky-400/40 text-sky-200 text-xs font-mono font-bold transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
@@ -1249,15 +1410,21 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
                           <button
                             type="button"
-                            onClick={handleInstallAppsScriptTriggers}
+                            onClick={handleCleanAppsScriptTriggers}
                             disabled={isInstallingTriggers}
-                            className="px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-mono font-bold shadow-lg shadow-emerald-700/25 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                            title="Instala automáticamente los triggers diarios (07:45 AM, 08:30 AM, 16:30 PM y 17:30 PM) en Google Apps Script"
+                            className="px-3 py-2 rounded-lg bg-amber-900/60 hover:bg-amber-800/80 border border-amber-500/40 text-amber-200 text-xs font-mono font-bold transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                            title="Limpia los activadores viejos de Google Apps Script ya que Railway asume el control 24/7"
                           >
                             <Clock className="w-3.5 h-3.5" />
-                            <span>{isInstallingTriggers ? 'Instalando...' : '⏰ Instalar Activadores en Google'}</span>
+                            <span>{isInstallingTriggers ? 'Limpiando...' : '🧹 Limpiar Activadores en Google'}</span>
                           </button>
                         </div>
+
+                        {syncScheduleMsg && (
+                          <div className="text-[11px] font-mono p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-indigo-200 leading-relaxed animate-in fade-in">
+                            {syncScheduleMsg}
+                          </div>
+                        )}
 
                         {remotePushStatus && (
                           <div className="text-[11px] font-mono p-2.5 rounded-lg bg-slate-900/80 border border-sky-500/30 text-sky-200 leading-relaxed">
@@ -1344,11 +1511,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <div className="flex items-center gap-2">
                             <Clock className="w-4 h-4 text-sky-400" />
                             <span className="text-xs font-mono font-bold text-white">
-                              07:45 AM • Recordatorio de Entrada
+                              {dynamicSchedules.recordatorioEntrada || '07:45'} AM • Recordatorio de Entrada
                             </span>
                           </div>
-                          <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
-                            Diario (L-V)
+                          <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 font-bold">
+                            Dinámico Sheets
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-300 font-sans italic">
@@ -1361,7 +1528,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             className="px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-300 text-[11px] font-mono font-bold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <Send className="w-3 h-3" />
-                            <span>Probar Notif (07:45 AM)</span>
+                            <span>Probar Notif ({dynamicSchedules.recordatorioEntrada || '07:45'})</span>
                           </button>
                         </div>
                       </div>
@@ -1372,7 +1539,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <div className="flex items-center gap-2">
                             <AlertTriangle className="w-4 h-4 text-amber-400" />
                             <span className="text-xs font-mono font-bold text-white">
-                              08:30 AM • Aviso por Olvido
+                              {dynamicSchedules.avisoOlvidoEntrada || '08:30'} AM • Aviso por Olvido
                             </span>
                           </div>
                           <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
@@ -1412,11 +1579,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <div className="flex items-center gap-2">
                             <Clock className="w-4 h-4 text-violet-400" />
                             <span className="text-xs font-mono font-bold text-white">
-                              16:30 PM • Aviso Previo de Salida
+                              {dynamicSchedules.avisoPrevioSalida || '16:30'} PM • Aviso Previo de Salida
                             </span>
                           </div>
-                          <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
-                            Fin de Jornada
+                          <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30 font-bold">
+                            Dinámico Sheets
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-300 font-sans italic">
@@ -1429,7 +1596,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             className="px-2.5 py-1.5 rounded-lg bg-violet-500/15 hover:bg-violet-500/25 border border-violet-400/40 text-violet-300 text-[11px] font-mono font-bold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <Send className="w-3 h-3" />
-                            <span>Probar Notif (16:30 PM)</span>
+                            <span>Probar Notif ({dynamicSchedules.avisoPrevioSalida || '16:30'})</span>
                           </button>
                         </div>
                       </div>
@@ -1440,15 +1607,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <div className="flex items-center gap-2">
                             <Power className="w-4 h-4 text-rose-400" />
                             <span className="text-xs font-mono font-bold text-white">
-                              17:30 PM • Cierre Automático x Sistema
+                              {dynamicSchedules.cierreAutomatico || '17:30'} PM • Cierre Automático x Sistema
                             </span>
                           </div>
                           <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 font-bold">
-                            Sheets Trigger
+                            Railway 24/7
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-300 font-sans">
-                          A las 17:30, si el empleado tiene entrada registrada y no marcó salida, el sistema genera automáticamente su salida oficial a las <strong>17:00:00</strong>.
+                          A las {dynamicSchedules.cierreAutomatico || '17:30'}, si el empleado tiene entrada registrada y no marcó salida, Railway ejecuta el cierre en Sheets generando su salida oficial a las <strong>17:00:00</strong>.
                         </p>
                         <div className="pt-1">
                           <button
@@ -1512,12 +1679,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 <div className="space-y-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="font-display text-base font-bold text-white">
-                        Código de Integración Google Apps Script (Codigo.gs)
-                      </h4>
-                      <p className="text-xs text-slate-400 font-mono">
-                        Pega este código en el editor de Apps Script de tu Google
-                        Sheets para sincronización en tiempo real con Railway.
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-display text-base font-bold text-white">
+                          Código Google Apps Script (Codigo.gs)
+                        </h4>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                          Versión 2.6 (Actualizado)
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 font-mono mt-1">
+                        Pega este código en el editor de Apps Script de tu Google Sheets para sincronización con Railway y lectura dinámica de horarios.
                       </p>
                     </div>
 
