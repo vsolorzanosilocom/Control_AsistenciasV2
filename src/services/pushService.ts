@@ -106,6 +106,19 @@ export class PushService {
         localStorage.setItem('silocom_push_sub', JSON.stringify(subData));
       } catch {}
 
+      // Sincronizar con el servidor Railway Express (/api/push-subscription)
+      try {
+        fetch('/api/push-subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subscription: subData,
+            userId: empId || localStorage.getItem('silocom_last_user_id') || 'GENERAL',
+            nombre: empNombre || 'Colaborador Silocom',
+          }),
+        }).catch((e) => console.warn('Error registrando suscripción en servidor Railway:', e));
+      } catch {}
+
       // Sincronizar con Google Sheets a través de Google Apps Script si está disponible
       if (gasWebAppUrl) {
         this.syncSubscriptionToGoogleSheets(subData, empId, empNombre, gasWebAppUrl).catch(
@@ -164,10 +177,10 @@ export class PushService {
   }
 
   /**
-   * Envía una prueba remota a través del endpoint Vercel /api/send-push con retardo opcional
+   * Envía una prueba remota a través del endpoint Express en Railway /api/send-push con retardo opcional
    * Permite al usuario bloquear la pantalla o cerrar la app y comprobar que llega por internet.
    */
-  public static async testRemotePushViaVercel(
+  public static async testRemotePush(
     delaySeconds = 8,
     customTitle?: string,
     customBody?: string
@@ -196,7 +209,7 @@ export class PushService {
           title: customTitle || 'Silocom C.A. - Alerta Remota Push',
           body:
             customBody ||
-            `¡Prueba remota en Vercel exitosa! Despachada con ${delaySeconds}s de retardo mientras la app estaba inactiva.`,
+            `¡Prueba remota en Railway exitosa! Despachada con ${delaySeconds}s de retardo mientras la app estaba inactiva.`,
           tag: 'silocom-test-remote-push',
           data: {
             url: '/',
@@ -226,6 +239,17 @@ export class PushService {
         message: `Error al conectar con /api/send-push: ${err?.message || err}`,
       };
     }
+  }
+
+  /**
+   * Alias de compatibilidad
+   */
+  public static async testRemotePushViaVercel(
+    delaySeconds = 8,
+    customTitle?: string,
+    customBody?: string
+  ): Promise<{ success: boolean; message: string }> {
+    return this.testRemotePush(delaySeconds, customTitle, customBody);
   }
 
   /**

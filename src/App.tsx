@@ -181,7 +181,7 @@ export default function App() {
               <span>Acceso Administrador</span>
             </button>
             <span>•</span>
-            <span className="text-slate-500">PWA / Vercel Ready</span>
+            <span className="text-slate-500">PWA / Railway Ready</span>
           </div>
         </div>
       </footer>

@@ -32,7 +32,7 @@ const CONFIG = {
   HOJA_ASISTENCIAS: 'Asistencias',
   HOJA_CONFIG: 'Configuracion',
   HOJA_PUSH: 'DispositivosPush',
-  URL_VERCEL_PUSH: 'https://silocom.vercel.app/api/send-push',
+  URL_PUSH_SERVER: 'https://silocom-production.up.railway.app/api/send-push', // Coloca aquí la URL pública de tu app en Railway (ej: https://silocom-production.up.railway.app/api/send-push)
   PUSH_SECRET: 'silocom_push_sec_2026',
   LATITUD_OFICINA: ${lat},
   LONGITUD_OFICINA: ${lng},
@@ -87,12 +87,8 @@ function doGet(e) {
       });
     }
 
-    if (action === 'probarPushRemoto') {
-      return respuestaJSON(enviarPushRemoto(
-        'Silocom C.A. - Notificación Remota',
-        'Prueba de despacho remoto ejecutada desde Google Apps Script.',
-        'silocom-test-remoto'
-      ));
+    if (action === 'probarPushRemoto' || action === 'probarPushDesdeGAS') {
+      return respuestaJSON(probarPushDesdeGAS());
     }
 
     return respuestaJSON({
@@ -407,15 +403,17 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
     }
 
     const cfg = obtenerConfiguracionDinamica();
-    const urlVercel = cfg.urlVercelPush || CONFIG.URL_VERCEL_PUSH;
+    const urlPushServer = cfg.urlPushServer || CONFIG.URL_PUSH_SERVER;
 
     const payload = {
       secret: CONFIG.PUSH_SECRET,
       subscriptions: subs,
-      notification: {
-        title: titulo || 'Silocom C.A. - Recordatorio',
-        body: cuerpo || 'Recordatorio de asistencia de jornada laboral.',
-        tag: tag || 'silocom-push-reminder'
+      title: titulo || 'Silocom C.A. - Recordatorio',
+      body: cuerpo || 'Recordatorio de asistencia de jornada laboral.',
+      tag: tag || 'silocom-push-reminder',
+      data: {
+        url: '/',
+        timestamp: new Date().getTime()
       }
     };
 
@@ -426,7 +424,7 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
       muteHttpExceptions: true
     };
 
-    const response = UrlFetchApp.fetch(urlVercel, options);
+    const response = UrlFetchApp.fetch(urlPushServer, options);
     const code = response.getResponseCode();
     const text = response.getContentText();
 
@@ -442,11 +440,35 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
       statusCode: code,
       enviados: jsonRes.sent || 0,
       fallidos: jsonRes.failed || 0,
-      message: 'Despacho completado. Respuesta Vercel: ' + text
+      message: 'Despacho completado. Respuesta Servidor Push: ' + text
     };
   } catch (err) {
-    return { success: false, message: 'Error en llamada a Vercel Push: ' + err.message };
+    return { success: false, message: 'Error en llamada a Servidor Push: ' + err.message };
   }
+}
+
+function enviarPushNotificacion(titulo, cuerpo, tag, filtroUserId) {
+  return enviarPushRemoto(titulo, cuerpo, tag, filtroUserId);
+}
+
+function enviarPushRecordatorioEntrada() {
+  return disparadorManana0745();
+}
+
+function enviarPushOlvidoEntrada() {
+  return disparadorOlvido0830();
+}
+
+function enviarPushRecordatorioSalida() {
+  return disparadorSalida1630();
+}
+
+function probarPushDesdeGAS() {
+  return enviarPushRemoto(
+    'Silocom C.A. - Notificación Remota de Prueba',
+    'Prueba de despacho remoto ejecutada exitosamente desde Google Apps Script hacia el Servidor Push.',
+    'silocom-test-remoto'
+  );
 }
 
 function desactivarEndpointsCaducados(endpointsCaducados) {
@@ -711,7 +733,7 @@ function obtenerConfiguracionDinamica() {
     ventanaSalidaFin: CONFIG.VENTANA_SALIDA_FIN,
     cierreAutomatico: CONFIG.CIERRE_AUTOMATICO,
     adminEmail: CONFIG.ADMIN_EMAIL,
-    urlVercelPush: CONFIG.URL_VERCEL_PUSH
+    urlPushServer: CONFIG.URL_PUSH_SERVER
   };
 
   try {
@@ -737,8 +759,8 @@ function obtenerConfiguracionDinamica() {
             configDinamica.radioMaxKm = parsed > 1 ? parsed / 1000 : parsed;
           }
         }
-        if (val.includes('vercel') && datos[r][c + 1]) {
-          configDinamica.urlVercelPush = datos[r][c + 1].toString().trim();
+        if ((val.includes('railway') || val.includes('push') || val.includes('servidor') || val.includes('vercel')) && datos[r][c + 1]) {
+          configDinamica.urlPushServer = datos[r][c + 1].toString().trim();
         }
       }
     }

@@ -222,11 +222,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   const handleTestRemotePush = async (delaySeconds = 10) => {
     setIsSendingRemotePush(true);
-    setRemotePushStatus(`⏳ Despachando a Vercel Push... Por favor bloquea la pantalla de tu teléfono o cierra la app. Llegará en ${delaySeconds}s.`);
-    const res = await PushService.testRemotePushViaVercel(
+    setRemotePushStatus(`⏳ Despachando a Servidor Railway Push... Por favor bloquea la pantalla de tu teléfono o cierra la app. Llegará en ${delaySeconds}s.`);
+    const res = await PushService.testRemotePush(
       delaySeconds,
-      'Silocom C.A. - Alerta Remota Vercel Push',
-      `¡Notificación con la App Cerrada recibida! Despachada exitosamente con ${delaySeconds}s de espera por internet.`
+      'Silocom C.A. - Alerta Remota Railway Push',
+      `¡Notificación con la App Cerrada recibida! Despachada exitosamente con ${delaySeconds}s de espera por internet desde Railway.`
     );
     setIsSendingRemotePush(false);
     setRemotePushStatus(res.message);
@@ -584,7 +584,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 }`}
               >
                 <Code2 className="w-4 h-4" />
-                <span>Código GAS & Vercel</span>
+                <span>Código GAS & Railway</span>
               </button>
             </div>
 
@@ -1218,10 +1218,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
                               </span>
-                              <span>🌐 Notificaciones Push Remotas (Vercel Serverless + Google Sheets)</span>
+                              <span>🌐 Notificaciones Push Remotas (Servidor Express en Railway + Google Sheets)</span>
                             </div>
                             <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                              Llegan <strong>con la app cerrada y el teléfono bloqueado</strong>. Google Apps Script y Vercel las despachan a nivel del sistema operativo.
+                              Llegan <strong>con la app cerrada y el teléfono bloqueado</strong>. El servidor persistente en Railway y Google Apps Script las despachan a nivel del sistema operativo.
                             </p>
                           </div>
                         </div>
@@ -1507,7 +1507,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </form>
               )}
 
-              {/* TAB 5: SCRIPT GAS & GUÍA DE DESPLIEGUE VERCEL */}
+              {/* TAB 5: SCRIPT GAS & GUÍA DE DESPLIEGUE RAILWAY */}
               {activeTab === 'script_gas' && (
                 <div className="space-y-6">
                   <div className="flex items-center justify-between">
@@ -1517,7 +1517,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       </h4>
                       <p className="text-xs text-slate-400 font-mono">
                         Pega este código en el editor de Apps Script de tu Google
-                        Sheets para sincronización en tiempo real.
+                        Sheets para sincronización en tiempo real con Railway.
                       </p>
                     </div>
 
@@ -1549,10 +1549,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     <pre>{gasScriptCode}</pre>
                   </div>
 
-                  {/* Vercel & GitHub Deployment Checklist */}
+                  {/* Railway & GitHub Deployment Checklist */}
                   <div className="rounded-2xl bg-[#131c2e] border border-slate-800 p-5 space-y-3">
                     <h5 className="font-display text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <span>🚀 Instrucciones para Vercel & GitHub</span>
+                      <span>🚀 Instrucciones para Railway & GitHub</span>
                     </h5>
 
                     <ol className="text-xs text-slate-300 font-mono space-y-2 list-decimal list-inside leading-relaxed">
@@ -1561,15 +1561,33 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         de todo el proyecto limpio a tu cuenta de GitHub.
                       </li>
                       <li>
-                        <strong>Importa en Vercel:</strong> Conecta tu cuenta de
-                        GitHub con Vercel y selecciona el repositorio de Silocom.
+                        <strong>Crea un proyecto en Railway:</strong> En{' '}
+                        <a
+                          href="https://railway.app"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-400 hover:underline"
+                        >
+                          Railway.app
+                        </a>
+                        , selecciona <em>New Project &gt; Deploy from GitHub repo</em> y elige este repositorio.
                       </li>
                       <li>
-                        <strong>Variables de Entorno en Vercel (Settings &gt; Environment Variables):</strong>{' '}
-                        Para que el despliegue y las notificaciones Web Push funcionen al 100%, añade:
+                        <strong>Configuración de inicio (Build & Start):</strong> Railway detecta automáticamente los scripts de <code>package.json</code>:
+                        <ul className="pl-6 mt-1 space-y-1 list-disc text-slate-300">
+                          <li>Build Command: <code>npm run build</code></li>
+                          <li>Start Command: <code>npm start</code> (ejecuta <code>node dist/server.cjs</code>)</li>
+                        </ul>
+                      </li>
+                      <li>
+                        <strong>Variables de Entorno en Railway (Variables tab):</strong>{' '}
+                        Añade las variables clave para el servidor Express y Web Push:
                         <ul className="pl-6 mt-2 space-y-1.5 list-disc text-slate-300">
                           <li>
-                            <code>VITE_GOOGLE_APPS_SCRIPT_URL</code>:{' '}
+                            <code>PORT</code>: <span className="text-slate-400">3000 (o asignado automáticamente por Railway)</span>
+                          </li>
+                          <li>
+                            <code>GOOGLE_APPS_SCRIPT_URL</code>:{' '}
                             <span className="text-slate-400">URL de la Web App generada en Apps Script (termina en <code>/exec</code>).</span>
                           </li>
                           <li>
@@ -1589,15 +1607,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <code className="text-emerald-300 text-[11px] select-all">silocom_push_sec_2026</code>
                           </li>
                           <li className="text-slate-400">
-                            <code>VITE_GOOGLE_SHEET_ID</code>: ID de la hoja de cálculo de Google.
+                            <code>ADMIN_EMAIL</code>: vsolorzano.silocom@gmail.com
                           </li>
                         </ul>
                       </li>
                       <li>
-                        <strong>Listo para producción:</strong> Vercel compilará
-                        automáticamente con <code>npm run build</code> y
-                        desplegará en su CDN global con soporte HTTPS (necesario
-                        para el GPS del móvil).
+                        <strong>Genera un dominio público:</strong> En Railway &gt; Settings &gt; Networking, pulsa <em>Generate Domain</em> para obtener tu URL HTTPS pública y actualizarla en tu <code>Codigo.gs</code> (variable <code>URL_PUSH_SERVER</code>).
                       </li>
                     </ol>
                   </div>
