@@ -818,55 +818,99 @@ function obtenerConfiguracionDinamica() {
     const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
     if (!hojaConfig) return configDinamica;
 
-    const maxFilas = Math.min(10, hojaConfig.getLastRow() || 6);
-    const maxCols = Math.min(8, hojaConfig.getLastColumn() || 4);
+    // 1. LECTURA DIRECTA POR CELDAS (Estructura oficial de Silocom C.A.)
+    // Tabla Superior (Filas 1 y 2):
+    // A2: Latitud (10.494505) | B2: Longitud (-66.831454) | C2: Radio (60 m) | D2: Administrador (silocomca)
+    try {
+      const valA2 = hojaConfig.getRange('A2').getValue();
+      const valB2 = hojaConfig.getRange('B2').getValue();
+      const valC2 = hojaConfig.getRange('C2').getValue();
+      const valD2 = hojaConfig.getRange('D2').getValue();
+
+      if (valA2 !== '' && !isNaN(parseFloat(valA2))) configDinamica.latitud = parseFloat(valA2);
+      if (valB2 !== '' && !isNaN(parseFloat(valB2))) configDinamica.longitud = parseFloat(valB2);
+      if (valC2 !== '' && !isNaN(parseFloat(valC2))) {
+        const rNum = parseFloat(valC2);
+        configDinamica.radioMaxKm = rNum > 1 ? rNum / 1000 : rNum;
+      }
+      if (valD2 !== '') configDinamica.adminEmail = valD2.toString().trim();
+    } catch (e1) {}
+
+    // Tabla de Horarios (Columnas E y F, Filas 4 a 9):
+    // E4: HORA ENTRADA             -> F4: 8:00
+    // E5: HORA SALIDA              -> F5: 17:00
+    // E6: RECORDATORIO DE ENTRADA  -> F6: 7:45
+    // E7: AVISO POR OLVIDO         -> F7: 8:30
+    // E8: AVISO PREVIO DE SALIDA   -> F8: 16:30
+    // E9: CIERRE AUTOMÁTICO (hora) -> F9: 17:30
+    try {
+      const valF4 = hojaConfig.getRange('F4').getValue();
+      const valF5 = hojaConfig.getRange('F5').getValue();
+      const valF6 = hojaConfig.getRange('F6').getValue();
+      const valF7 = hojaConfig.getRange('F7').getValue();
+      const valF8 = hojaConfig.getRange('F8').getValue();
+      const valF9 = hojaConfig.getRange('F9').getValue();
+
+      if (valF4 !== '') {
+        const f4Str = formatearHoraCadena(valF4, '08:00');
+        configDinamica.horaEntrada = parseInt(f4Str.split(':')[0], 10) || 8;
+      }
+      if (valF5 !== '') {
+        const f5Str = formatearHoraCadena(valF5, '17:00');
+        configDinamica.horaSalida = parseInt(f5Str.split(':')[0], 10) || 17;
+      }
+      if (valF6 !== '') {
+        configDinamica.recordatorioEntrada = formatearHoraCadena(valF6, configDinamica.recordatorioEntrada);
+      }
+      if (valF7 !== '') {
+        configDinamica.avisoOlvidoEntrada = formatearHoraCadena(valF7, configDinamica.avisoOlvidoEntrada);
+      }
+      if (valF8 !== '') {
+        configDinamica.avisoPrevioSalida = formatearHoraCadena(valF8, configDinamica.avisoPrevioSalida);
+      }
+      if (valF9 !== '') {
+        configDinamica.cierreAutomatico = formatearHoraCadena(valF9, configDinamica.cierreAutomatico);
+      }
+    } catch (e2) {}
+
+    // 2. ESCANEO DINÁMICO DE RESPALDO (Por si se insertan o mueven filas/columnas)
+    const maxFilas = Math.min(15, hojaConfig.getLastRow() || 10);
+    const maxCols = Math.min(8, hojaConfig.getLastColumn() || 6);
     const datos = hojaConfig.getRange(1, 1, maxFilas, maxCols).getValues();
 
     for (let r = 0; r < datos.length; r++) {
       for (let c = 0; c < datos[r].length; c++) {
         const val = (datos[r][c] || '').toString().toLowerCase().trim();
-        const siguienteValor = (c + 1 < datos[r].length) ? datos[r][c + 1] : '';
+        const valorDerecha = (c + 1 < datos[r].length) ? datos[r][c + 1] : '';
+        const valorAbajo = (r + 1 < datos.length) ? datos[r + 1][c] : '';
+        const valorParam = valorDerecha !== '' ? valorDerecha : valorAbajo;
 
-        // Coordenadas y Radio
-        if (val.includes('latitud') && siguienteValor !== '') {
-          const parsed = parseFloat(siguienteValor);
-          if (!isNaN(parsed)) configDinamica.latitud = parsed;
+        if (val.includes('latitud') && valorParam !== '') {
+          const p = parseFloat(valorParam);
+          if (!isNaN(p)) configDinamica.latitud = p;
         }
-        if (val.includes('longitud') && siguienteValor !== '') {
-          const parsed = parseFloat(siguienteValor);
-          if (!isNaN(parsed)) configDinamica.longitud = parsed;
+        if (val.includes('longitud') && valorParam !== '') {
+          const p = parseFloat(valorParam);
+          if (!isNaN(p)) configDinamica.longitud = p;
         }
-        if (val.includes('radio') && siguienteValor !== '') {
-          const parsed = parseFloat(siguienteValor);
-          if (!isNaN(parsed)) {
-            configDinamica.radioMaxKm = parsed > 1 ? parsed / 1000 : parsed;
-          }
+        if (val.includes('radio') && valorParam !== '') {
+          const p = parseFloat(valorParam);
+          if (!isNaN(p)) configDinamica.radioMaxKm = p > 1 ? p / 1000 : p;
         }
-        // Servidor Railway
-        if ((val.includes('railway') || val.includes('push') || val.includes('servidor') || val.includes('vercel')) && siguienteValor !== '') {
-          configDinamica.urlPushServer = siguienteValor.toString().trim();
+        if ((val.includes('railway') || val.includes('push') || val.includes('servidor')) && valorParam !== '') {
+          configDinamica.urlPushServer = valorParam.toString().trim();
         }
-
-        // Horarios Dinámicos de Notificaciones y Cierre
-        if ((val.includes('recordatorio entrada') || val.includes('alerta entrada') || val.includes('recordatorio_entrada') || val.includes('hora recordatorio entrada')) && siguienteValor !== '') {
-          configDinamica.recordatorioEntrada = formatearHoraCadena(siguienteValor, configDinamica.recordatorioEntrada);
+        if (val.includes('recordatorio') && val.includes('entrada') && valorParam !== '') {
+          configDinamica.recordatorioEntrada = formatearHoraCadena(valorParam, configDinamica.recordatorioEntrada);
         }
-        if ((val.includes('aviso olvido') || val.includes('olvido entrada') || val.includes('alerta olvido') || val.includes('aviso_olvido')) && siguienteValor !== '') {
-          configDinamica.avisoOlvidoEntrada = formatearHoraCadena(siguienteValor, configDinamica.avisoOlvidoEntrada);
+        if (val.includes('olvido') && valorParam !== '') {
+          configDinamica.avisoOlvidoEntrada = formatearHoraCadena(valorParam, configDinamica.avisoOlvidoEntrada);
         }
-        if ((val.includes('recordatorio salida') || val.includes('aviso previo salida') || val.includes('alerta salida') || val.includes('aviso salida')) && siguienteValor !== '') {
-          configDinamica.avisoPrevioSalida = formatearHoraCadena(siguienteValor, configDinamica.avisoPrevioSalida);
+        if (val.includes('previo') && val.includes('salida') && valorParam !== '') {
+          configDinamica.avisoPrevioSalida = formatearHoraCadena(valorParam, configDinamica.avisoPrevioSalida);
         }
-        if ((val.includes('cierre') || val.includes('cierre automatico') || val.includes('cierre_automatico') || val.includes('cierre turnos')) && siguienteValor !== '') {
-          configDinamica.cierreAutomatico = formatearHoraCadena(siguienteValor, configDinamica.cierreAutomatico);
-        }
-        if (val === 'hora entrada' && siguienteValor !== '') {
-          const parsedH = parseFloat(siguienteValor);
-          if (!isNaN(parsedH)) configDinamica.horaEntrada = parsedH;
-        }
-        if (val === 'hora salida' && siguienteValor !== '') {
-          const parsedH = parseFloat(siguienteValor);
-          if (!isNaN(parsedH)) configDinamica.horaSalida = parsedH;
+        if (val.includes('cierre') && valorParam !== '') {
+          configDinamica.cierreAutomatico = formatearHoraCadena(valorParam, configDinamica.cierreAutomatico);
         }
       }
     }
